@@ -1,31 +1,29 @@
 from contextlib import asynccontextmanager
-
 from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .database import Base, engine
 from .routes import config, orders, payments, webhooks
+from .routes import transactions, metrics, demo, queue, insights, audit, cost_config
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Ensure database schema is created on startup
     Base.metadata.create_all(bind=engine)
     yield
 
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    description="TieBreaker - Payment Routing & Strike Decision Engine (Phase 1)",
-    version="0.2.0",
+    description="TieBreaker - Cost-Aware Risk Decision Engine",
+    version="1.0.0",
     openapi_url="/openapi.json" if settings.DEBUG else None,
     docs_url="/docs" if settings.DEBUG else None,
     redoc_url="/redoc" if settings.DEBUG else None,
     lifespan=lifespan,
 )
 
-# CORS configuration - supports exact deployed frontend URL plus localhost
 if settings.BACKEND_CORS_ORIGINS:
     app.add_middleware(
         CORSMiddleware,
@@ -35,37 +33,32 @@ if settings.BACKEND_CORS_ORIGINS:
         allow_headers=["*"],
     )
 
-# Include API routers
+# Existing routes
 app.include_router(orders.router)
 app.include_router(webhooks.router)
 app.include_router(payments.router)
 app.include_router(config.router)
 
+# NEW TieBreaker routes
+app.include_router(transactions.router, prefix="/api")
+app.include_router(metrics.router, prefix="/api")
+app.include_router(demo.router, prefix="/api")
+app.include_router(queue.router, prefix="/api")
+app.include_router(insights.router, prefix="/api")
+app.include_router(audit.router, prefix="/api")
+app.include_router(cost_config.router, prefix="/api")
 
-@app.get(
-    "/health",
-    status_code=status.HTTP_200_OK,
-    summary="Health check endpoint",
-    response_description="Service health status",
-)
+
+@app.get("/health", status_code=status.HTTP_200_OK)
 def health_check():
-    """
-    Independent health check endpoint.
-    Returns HTTP 200 whenever the FastAPI backend is running.
-    Does not require database connectivity.
-    """
     return {"status": "healthy"}
 
 
-@app.get(
-    "/",
-    status_code=status.HTTP_200_OK,
-    summary="Root endpoint",
-)
+@app.get("/", status_code=status.HTTP_200_OK)
 def root():
     return {
         "project": settings.PROJECT_NAME,
-        "phase": "Phase 1",
+        "phase": "Phase 2 - ML + Decision Engine",
         "status": "ready",
         "razorpay_configured": settings.is_razorpay_configured,
         "environment": settings.ENVIRONMENT,
