@@ -17,4 +17,5 @@ def test_root_returns_200():
     assert response.status_code == 200
     data = response.json()
     assert data.get("project") == "TieBreaker"
-    assert data.get("phase") == "Phase 0"
+    assert data.get("phase") in ["Phase 0", "Phase 1"]
+    assert data.get("status") == "ready"

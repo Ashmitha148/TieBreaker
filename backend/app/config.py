@@ -1,5 +1,5 @@
 from typing import List, Union
-from pydantic import AnyHttpUrl, field_validator
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,6 +10,11 @@ class Settings(BaseSettings):
 
     # Database: Default to SQLite local fallback, ready for PostgreSQL via DATABASE_URL
     DATABASE_URL: str = "sqlite:///./tiebreaker.db"
+
+    # Razorpay Test Mode Credentials (Never expose secrets to client)
+    RAZORPAY_KEY_ID: str = ""
+    RAZORPAY_KEY_SECRET: str = ""
+    RAZORPAY_WEBHOOK_SECRET: str = ""
 
     # CORS Origins
     BACKEND_CORS_ORIGINS: Union[List[str], str] = [
@@ -26,6 +31,17 @@ class Settings(BaseSettings):
         elif isinstance(v, list):
             return [str(i) for i in v]
         return v
+
+    @property
+    def is_razorpay_configured(self) -> bool:
+        """Returns True only when real/valid Razorpay key ID and secret are configured."""
+        key_id = self.RAZORPAY_KEY_ID.strip()
+        key_secret = self.RAZORPAY_KEY_SECRET.strip()
+        if not key_id or not key_secret:
+            return False
+        if key_id == "rzp_test_..." or key_secret == "...":
+            return False
+        return True
 
     model_config = SettingsConfigDict(
         env_file=".env",
