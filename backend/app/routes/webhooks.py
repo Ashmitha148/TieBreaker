@@ -1,9 +1,11 @@
 import json
 import logging
-from fastapi import APIRouter, Request, BackgroundTasks, Depends, HTTPException, status
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
-from ..database import get_db
+
 from ..config import settings
+from ..database import get_db
 from ..models import WebhookEvent
 from ..schemas import WebhookResponse
 from ..services.razorpay_service import verify_webhook_signature
@@ -62,7 +64,7 @@ async def handle_razorpay_webhook(
     try:
         payload_data = json.loads(raw_body.decode("utf-8"))
     except Exception as e:
-        logger.warning(f"Malformed JSON in webhook body: {str(e)}")
+        logger.warning(f"Malformed JSON in webhook body: {e!s}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Malformed JSON in webhook body",

@@ -1,9 +1,11 @@
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
+
 from .config import settings
-from .database import engine, Base
-from .routes import orders, webhooks, payments, config
+from .database import Base, engine
+from .routes import config, orders, payments, webhooks
 
 
 @asynccontextmanager

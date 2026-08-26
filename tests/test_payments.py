@@ -1,10 +1,12 @@
-import hmac
 import hashlib
+import hmac
+
 from fastapi.testclient import TestClient
-from backend.app.main import app
+
 from backend.app.config import settings
 from backend.app.database import SessionLocal
-from backend.app.models import Payment, Order
+from backend.app.main import app
+from backend.app.models import Order
 
 client = TestClient(app)
 
@@ -49,7 +51,7 @@ def test_verify_checkout_payment_valid_signature(monkeypatch):
     payment_id = "pay_verify_test_001"
     signature = hmac.new(
         test_secret.encode("utf-8"),
-        f"{order_id}|{payment_id}".encode("utf-8"),
+        f"{order_id}|{payment_id}".encode(),
         hashlib.sha256,
     ).hexdigest()
 

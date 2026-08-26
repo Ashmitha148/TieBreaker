@@ -1,5 +1,6 @@
 import pytest
-from backend.app.database import engine, Base, SessionLocal
+
+from backend.app.database import Base, engine
 
 
 @pytest.fixture(autouse=True)

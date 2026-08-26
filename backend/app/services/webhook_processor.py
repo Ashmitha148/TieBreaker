@@ -1,15 +1,17 @@
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Dict, Any
+from typing import Any
+
 from sqlalchemy.orm import Session
+
 from ..database import SessionLocal
 from ..models import Order, Payment, WebhookEvent
 
 logger = logging.getLogger("tiebreaker.webhook_processor")
 
 
-def process_webhook_event_task(event_id: str, event_type: str, payload_data: Dict[str, Any]):
+def process_webhook_event_task(event_id: str, event_type: str, payload_data: dict[str, Any]):
     """
     Asynchronous background worker for processing verified Razorpay webhook events.
     Is resilient and event-order tolerant: updates/upserts payment and order records
@@ -149,7 +151,7 @@ def process_webhook_event_task(event_id: str, event_type: str, payload_data: Dic
 
     except Exception as e:
         db.rollback()
-        logger.error(f"Error processing webhook event {event_id}: {str(e)}", exc_info=True)
+        logger.error(f"Error processing webhook event {event_id}: {e!s}", exc_info=True)
         if event_record:
             event_record.status = "failed"
             event_record.error_message = str(e)

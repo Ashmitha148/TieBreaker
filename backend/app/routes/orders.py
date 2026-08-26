@@ -1,12 +1,13 @@
 import json
-from typing import List
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from ..database import get_db
+
 from ..config import settings
+from ..database import get_db
 from ..models import Order
 from ..schemas import OrderCreate, OrderResponse
-from ..services.razorpay_service import create_order, RazorpayNotConfiguredError
+from ..services.razorpay_service import RazorpayNotConfiguredError, create_order
 
 router = APIRouter(prefix="/api/orders", tags=["Orders"])
 
@@ -32,7 +33,7 @@ def create_new_order(order_in: OrderCreate, db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Razorpay order creation failed: {str(e)}",
+            detail=f"Razorpay order creation failed: {e!s}",
         )
 
     # Persist the order in our database
@@ -61,7 +62,7 @@ def create_new_order(order_in: OrderCreate, db: Session = Depends(get_db)):
     return response
 
 
-@router.get("", response_model=List[OrderResponse])
+@router.get("", response_model=list[OrderResponse])
 def list_orders(limit: int = 50, db: Session = Depends(get_db)):
     """Lists recent orders created in the database."""
     orders = db.query(Order).order_by(Order.created_at.desc()).limit(limit).all()

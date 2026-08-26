@@ -1,14 +1,15 @@
-import hmac
 import hashlib
-from typing import Optional, Dict, Any
+import hmac
+from typing import Any
 from uuid import uuid4
+
 import razorpay
+
 from ..config import settings
 
 
 class RazorpayNotConfiguredError(Exception):
     """Raised when Razorpay operations are invoked without configured credentials."""
-    pass
 
 
 def get_razorpay_client() -> razorpay.Client:
@@ -27,9 +28,9 @@ def get_razorpay_client() -> razorpay.Client:
 def create_order(
     amount: int,
     currency: str = "INR",
-    receipt: Optional[str] = None,
-    notes: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    receipt: str | None = None,
+    notes: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """
     Creates a real Razorpay Test Mode order via the Razorpay API.
     Amount must be specified in the smallest currency unit (paise for INR).
@@ -76,7 +77,7 @@ def verify_payment_signature(
     if not secret or not razorpay_signature or not razorpay_order_id or not razorpay_payment_id:
         return False
 
-    message = f"{razorpay_order_id}|{razorpay_payment_id}".encode("utf-8")
+    message = f"{razorpay_order_id}|{razorpay_payment_id}".encode()
     expected_signature = hmac.new(
         secret.encode("utf-8"),
         message,

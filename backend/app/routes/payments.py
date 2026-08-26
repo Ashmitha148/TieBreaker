@@ -1,16 +1,17 @@
-from typing import List
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from ..database import get_db
+
 from ..config import settings
-from ..models import Payment, Order
+from ..database import get_db
+from ..models import Order, Payment
 from ..schemas import PaymentResponse, PaymentVerifyRequest
 from ..services.razorpay_service import verify_payment_signature
 
 router = APIRouter(prefix="/api/payments", tags=["Payments"])
 
 
-@router.get("", response_model=List[PaymentResponse])
+@router.get("", response_model=list[PaymentResponse])
 def list_payments(limit: int = 50, db: Session = Depends(get_db)):
     """
     Returns list of persisted payments/transactions for visibility in TieBreaker UI.
