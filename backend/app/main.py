@@ -1,11 +1,11 @@
-﻿from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .database import Base, engine
 from .routes import orders, payments, webhooks
-from .routes import transactions, metrics, demo, queue, insights, audit, config
+from .routes import transactions, metrics, demo, queue, insights, audit, config as config_route
 
 
 @asynccontextmanager
@@ -33,19 +33,17 @@ if settings.BACKEND_CORS_ORIGINS:
         allow_headers=["*"],
     )
 
-# Existing routes
-app.include_router(orders.router)
-app.include_router(webhooks.router)
-app.include_router(payments.router)
-
-# TieBreaker routes
+# ALL routes under /api for consistency
+app.include_router(orders.router, prefix="/api")
+app.include_router(payments.router, prefix="/api")
+app.include_router(webhooks.router, prefix="/api")
 app.include_router(transactions.router, prefix="/api")
 app.include_router(metrics.router, prefix="/api")
 app.include_router(demo.router, prefix="/api")
 app.include_router(queue.router, prefix="/api")
 app.include_router(insights.router, prefix="/api")
 app.include_router(audit.router, prefix="/api")
-app.include_router(config.router, prefix="/api")
+app.include_router(config_route.router, prefix="/api")
 
 
 @app.get("/health", status_code=status.HTTP_200_OK)
@@ -62,4 +60,3 @@ def root():
         "razorpay_configured": settings.is_razorpay_configured,
         "environment": settings.ENVIRONMENT,
     }
-
