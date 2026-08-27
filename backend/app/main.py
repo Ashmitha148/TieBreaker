@@ -4,8 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .database import Base, engine
-from .routes import config, orders, payments, webhooks
-from .routes import transactions, metrics, demo, queue, insights, audit, cost_config
+from .routes import orders, payments, webhooks
+from .routes import transactions, metrics, demo, queue, insights, audit, config
 
 
 @asynccontextmanager
@@ -37,16 +37,15 @@ if settings.BACKEND_CORS_ORIGINS:
 app.include_router(orders.router)
 app.include_router(webhooks.router)
 app.include_router(payments.router)
-app.include_router(config.router)
 
-# NEW TieBreaker routes
+# TieBreaker routes
 app.include_router(transactions.router, prefix="/api")
 app.include_router(metrics.router, prefix="/api")
 app.include_router(demo.router, prefix="/api")
 app.include_router(queue.router, prefix="/api")
 app.include_router(insights.router, prefix="/api")
 app.include_router(audit.router, prefix="/api")
-app.include_router(cost_config.router, prefix="/api")
+app.include_router(config.router, prefix="/api")
 
 
 @app.get("/health", status_code=status.HTTP_200_OK)

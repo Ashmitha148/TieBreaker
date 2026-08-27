@@ -5,7 +5,11 @@ export default function Navbar() {
   const nav = [
     { path: '/', label: 'Demo Checkout' },
     { path: '/command', label: 'Command Center' },
-    { path: '/transaction/TXN-COUNTER-001', label: 'Deep Dive' },
+    { path: '/queue', label: 'Queue Oracle' },
+    { path: '/performance', label: 'Performance' },
+    { path: '/learning', label: 'Learning' },
+    { path: '/config', label: 'Config' },
+    { path: '/audit', label: 'Audit' },
   ]
   return (
     <nav className="bg-[#0f1525] border-b border-gray-800 px-6 py-3 flex gap-6 text-sm font-medium items-center flex-wrap">

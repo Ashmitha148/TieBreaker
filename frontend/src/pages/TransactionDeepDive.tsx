@@ -1,6 +1,7 @@
 ﻿import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { API_URL } from '../config'
+import WhatIfSimulator from '../components/WhatIfSimulator'
 
 export default function TransactionDeepDive() {
   const { id } = useParams()
@@ -68,6 +69,7 @@ export default function TransactionDeepDive() {
             </div>
           )}
         </div>
+        <WhatIfSimulator initialFraud={fraud_prob} initialFP={fp_prob} initialAmount={transaction?.amount} initialLTV={ltv} />
       </div>
     </div>
   )

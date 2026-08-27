@@ -80,3 +80,13 @@ def get_transaction(tx_id: str):
         'baseline_loss': baseline_loss,
         'savings_vs_baseline': savings
     }
+
+@router.post('/whatif')
+def whatif_scenario(payload: dict):
+    fraud_prob = payload.get('fraud_prob', 0.5)
+    fp_prob = payload.get('fp_prob', 0.2)
+    amount = payload.get('amount', 10000)
+    ltv = payload.get('ltv', 50000)
+    from app.services.strike_selector import calculate_action_losses
+    result = calculate_action_losses(fraud_prob, fp_prob, amount, ltv)
+    return result
