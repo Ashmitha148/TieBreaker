@@ -1,58 +1,82 @@
-﻿from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
-from typing import List, Optional
-from datetime import datetime
+﻿import csv
+import pickle
+from pathlib import Path
+from fastapi import APIRouter, HTTPException
+from app.ml.models import FraudModel, FPModel
 
 router = APIRouter()
 
-class TransactionBase(BaseModel):
-    amount: float
-    description: Optional[str] = None
-    category: Optional[str] = None
+BASE_DIR = Path(__file__).parent.parent
+DATA_DIR = BASE_DIR / 'ml' / 'data'
+ARTIFACTS_DIR = BASE_DIR / 'ml' / 'artifacts'
 
-class TransactionCreate(TransactionBase):
-    pass
+_all_records = None
+_models = None
 
-class Transaction(TransactionBase):
-    id: int
-    created_at: datetime
-    class Config:
-        from_attributes = True
+def load_csv(filename):
+    with open(filename, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        return [{k: _cast(v) for k, v in row.items()} for row in reader]
 
-FAKE_DB: dict[int, Transaction] = {}
-_next_id = 1
+def _cast(v):
+    try:
+        return int(v)
+    except:
+        try:
+            return float(v)
+        except:
+            return v
 
-@router.get("/transactions", response_model=List[Transaction])
+def get_all_records():
+    global _all_records
+    if _all_records is None:
+        _all_records = load_csv(DATA_DIR / 'full.csv')
+    return _all_records
+
+def get_models():
+    global _models
+    if _models is None:
+        with open(ARTIFACTS_DIR / 'fraud_model.pkl', 'rb') as f:
+            fraud = pickle.load(f)
+        with open(ARTIFACTS_DIR / 'fp_model.pkl', 'rb') as f:
+            fp = pickle.load(f)
+        _models = {'fraud': fraud, 'fp': fp}
+    return _models
+
+@router.get('/transactions')
 def list_transactions():
-    return list(FAKE_DB.values())
+    records = get_all_records()
+    txs = records[:100]
+    return [{'id': t['transaction_id'], 'amount': t['amount'], 'is_fraud': t['is_fraud'],
+             'is_flagged': t['is_flagged'], 'merchant_category': t['merchant_category']} for t in txs]
 
-@router.get("/transactions/{transaction_id}", response_model=Transaction)
-def get_transaction(transaction_id: int):
-    tx = FAKE_DB.get(transaction_id)
+@router.get('/transactions/{tx_id}')
+def get_transaction(tx_id: str):
+    records = get_all_records()
+    tx = next((r for r in records if r['transaction_id'] == tx_id), None)
     if not tx:
-        raise HTTPException(status_code=404, detail="Transaction not found")
-    return tx
-
-@router.post("/transactions", response_model=Transaction, status_code=status.HTTP_201_CREATED)
-def create_transaction(payload: TransactionCreate):
-    global _next_id
-    tx = Transaction(id=_next_id, amount=payload.amount, description=payload.description, category=payload.category, created_at=datetime.utcnow())
-    FAKE_DB[_next_id] = tx
-    _next_id += 1
-    return tx
-
-@router.put("/transactions/{transaction_id}", response_model=Transaction)
-def update_transaction(transaction_id: int, payload: TransactionCreate):
-    if transaction_id not in FAKE_DB:
-        raise HTTPException(status_code=404, detail="Transaction not found")
-    existing = FAKE_DB[transaction_id]
-    updated = existing.model_copy(update={"amount": payload.amount, "description": payload.description, "category": payload.category})
-    FAKE_DB[transaction_id] = updated
-    return updated
-
-@router.delete("/transactions/{transaction_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_transaction(transaction_id: int):
-    if transaction_id not in FAKE_DB:
-        raise HTTPException(status_code=404, detail="Transaction not found")
-    del FAKE_DB[transaction_id]
-    return None
+        raise HTTPException(404, 'Transaction not found')
+    
+    models = get_models()
+    fraud_prob = float(models['fraud']['model'].predict_proba([tx])[0][1])
+    fp_prob = float(models['fp']['model'].predict_proba([tx])[0][1])
+    
+    ltv = tx['customer_avg_tx_size'] * tx['customer_tx_count_30d'] * 6 * 0.7
+    
+    from app.services.strike_selector import calculate_action_losses, threshold_baseline_decision
+    result = calculate_action_losses(fraud_prob, fp_prob, tx['amount'], ltv)
+    baseline_action = threshold_baseline_decision(fraud_prob)
+    baseline_loss = result['losses'][baseline_action]
+    tiebreaker_loss = result['losses'][result['recommended_action']]
+    savings = baseline_loss - tiebreaker_loss
+    
+    return {
+        'transaction': tx,
+        'fraud_prob': fraud_prob,
+        'fp_prob': fp_prob,
+        'ltv': ltv,
+        'decision': result,
+        'baseline_action': baseline_action,
+        'baseline_loss': baseline_loss,
+        'savings_vs_baseline': savings
+    }
