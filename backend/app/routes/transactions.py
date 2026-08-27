@@ -36,11 +36,22 @@ def get_all_records():
 def get_models():
     global _models
     if _models is None:
-        with open(ARTIFACTS_DIR / 'fraud_model.pkl', 'rb') as f:
-            fraud = pickle.load(f)
-        with open(ARTIFACTS_DIR / 'fp_model.pkl', 'rb') as f:
-            fp = pickle.load(f)
-        _models = {'fraud': fraud, 'fp': fp}
+        try:
+            with open(ARTIFACTS_DIR / 'fraud_model.pkl', 'rb') as f:
+                fraud = pickle.load(f)
+            with open(ARTIFACTS_DIR / 'fp_model.pkl', 'rb') as f:
+                fp = pickle.load(f)
+            _models = {'fraud': fraud, 'fp': fp}
+        except Exception:
+            # Fallback for Railway/Linux
+            from app.ml.train_models import evaluate, compute_fraud_score, compute_fp_score
+            test = load_csv(DATA_DIR / 'test.csv')
+            fraud_metrics = evaluate(test, compute_fraud_score, 'is_fraud')
+            fp_metrics = evaluate(test, compute_fp_score, 'is_false_positive')
+            _models = {
+                'fraud': {'model': FraudModel(), 'features': list(test[0].keys()), 'metrics': fraud_metrics},
+                'fp': {'model': FPModel(), 'features': list(test[0].keys()), 'metrics': fp_metrics}
+            }
     return _models
 
 @router.get('/transactions')
@@ -80,13 +91,3 @@ def get_transaction(tx_id: str):
         'baseline_loss': baseline_loss,
         'savings_vs_baseline': savings
     }
-
-@router.post('/whatif')
-def whatif_scenario(payload: dict):
-    fraud_prob = payload.get('fraud_prob', 0.5)
-    fp_prob = payload.get('fp_prob', 0.2)
-    amount = payload.get('amount', 10000)
-    ltv = payload.get('ltv', 50000)
-    from app.services.strike_selector import calculate_action_losses
-    result = calculate_action_losses(fraud_prob, fp_prob, amount, ltv)
-    return result
