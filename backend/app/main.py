@@ -27,7 +27,7 @@ app = FastAPI(
 if settings.BACKEND_CORS_ORIGINS:
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173","http://127.0.0.1:5173"],
+        allow_origins=["https://tie-breaker-pi.vercel.app","http://localhost:5173","http://127.0.0.1:5173"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -62,3 +62,4 @@ def root():
         "razorpay_configured": settings.is_razorpay_configured,
         "environment": settings.ENVIRONMENT,
     }
+
