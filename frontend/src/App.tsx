@@ -10,6 +10,7 @@ import Learning from './pages/Learning'
 import Performance from './pages/Performance'
 import Config from './pages/Config'
 import Audit from './pages/Audit'
+import ShadowMode from './pages/ShadowMode' // ← NEW
 
 function AnimatedRoutes() {
   const location = useLocation()
@@ -19,6 +20,7 @@ function AnimatedRoutes() {
         <Route path="/" element={<Landing />} />
         <Route path="/checkout" element={<Checkout />} />
         <Route path="/command" element={<Dashboard />} />
+        <Route path="/shadow" element={<ShadowMode />} /> {/* ← NEW */}
         <Route path="/transaction/:id" element={<TransactionDetail />} />
         <Route path="/queue" element={<Queue />} />
         <Route path="/learning" element={<Learning />} />

@@ -3,13 +3,14 @@ import { Link, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
   LayoutDashboard, CreditCard, ListOrdered, Brain,
-  BarChart3, Settings, ShieldCheck, ChevronLeft, ChevronRight
+  BarChart3, Settings, ShieldCheck, Zap, ChevronLeft, ChevronRight
 } from 'lucide-react'
 import Logo from './Logo'
 
 const links = [
   { path: '/command', label: 'Command Center', icon: LayoutDashboard },
   { path: '/checkout', label: 'Checkout Demo', icon: CreditCard },
+  { path: '/shadow', label: 'Shadow Mode', icon: Zap },
   { path: '/queue', label: 'Queue Oracle', icon: ListOrdered },
   { path: '/learning', label: 'Override Learning', icon: Brain },
   { path: '/performance', label: 'Performance', icon: BarChart3 },

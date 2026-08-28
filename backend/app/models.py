@@ -65,6 +65,7 @@ class Decision(Base):
     fp_prob = Column(Float, nullable=False)
     amount = Column(Float, nullable=False)
     ltv = Column(Float, nullable=False)
+    merchant_category = Column(String(50), nullable=True, index=True)  # ← NEW
     recommended_action = Column(String(20), nullable=False)
     baseline_action = Column(String(20), nullable=False)
     savings_vs_baseline = Column(Float, nullable=False)

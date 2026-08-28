@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -62,3 +62,34 @@ class ConfigResponse(BaseModel):
     environment: str
     is_test_mode: bool
     razorpay_key_id: str | None = None
+
+
+# ── NEW SCHEMAS FOR PHASE 2 ──
+
+class CostConfigItem(BaseModel):
+    FRAUD_LOSS_MULTIPLIER: float = 2.5
+    FRICTION_COST_RATE: float = 0.05
+    RESIDUAL_FRAUD_POST_3DS: float = 0.30
+    ANALYST_HOUR_COST: float = 100.0
+    DELAY_RISK_RATE: float = 0.15
+
+
+class CostConfigResponse(BaseModel):
+    config: dict[str, float]
+    version: str
+    changed_by: str
+    updated_at: str | None = None
+
+
+class DemoTransactionResponse(BaseModel):
+    transaction: dict[str, Any]
+    prediction: dict[str, Any]
+    decision: dict[str, Any]
+    savings_vs_baseline: float
+
+
+class HealthResponse(BaseModel):
+    status: str
+    version: str
+    ml: dict[str, Any] | None = None
+    

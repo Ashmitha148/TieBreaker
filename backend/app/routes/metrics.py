@@ -1,45 +1,47 @@
 ﻿from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+from sqlalchemy import func
+from datetime import datetime, timedelta
 
 from ..database import get_db
 from ..models import Decision, Override
-from ..ml.models import get_model_manager
 
 router = APIRouter()
 
 
 @router.get("/metrics")
 def get_metrics(db: Session = Depends(get_db)):
-    mgr = get_model_manager()
     total_decisions = db.query(Decision).count()
     total_overrides = db.query(Override).count()
+
+    # Action distribution
+    action_counts = (
+        db.query(Decision.recommended_action, func.count(Decision.id))
+        .group_by(Decision.recommended_action)
+        .all()
+    )
+    action_distribution = {action: count for action, count in action_counts}
+
+    # Counterintuitive decisions
     counterintuitive = db.query(Decision).filter(Decision.is_counterintuitive == True).count()
-    fraud_metrics = mgr.fraud_metrics
-    fp_metrics = mgr.fp_metrics
-    avg_amount = db.query(Decision).filter(Decision.amount > 0).first()
-    sample_amount = avg_amount.amount if avg_amount else 250000
-    fraud_savings = round(total_decisions * 0.025 * sample_amount * 0.15, 0)
-    fp_savings = round(total_decisions * 0.15 * sample_amount * 0.08, 0)
+
+    # Recent decisions (last 24h)
+    recent_cutoff = datetime.utcnow() - timedelta(hours=24)
+    recent_decisions = db.query(Decision).filter(Decision.created_at >= recent_cutoff).count()
+
+    # Average savings
+    avg_savings = db.query(func.avg(Decision.savings_vs_baseline)).scalar() or 0
+
+    # Override rate
+    override_rate = (total_overrides / total_decisions * 100) if total_decisions > 0 else 0
 
     return {
-        "model_performance": {
-            "fraud_model": fraud_metrics,
-            "fp_model": fp_metrics,
-        },
-        "system_stats": {
-            "total_decisions": total_decisions,
-            "total_overrides": total_overrides,
-            "counterintuitive_cases": counterintuitive,
-            "override_rate": round(total_overrides / max(total_decisions, 1) * 100, 2),
-        },
-        "financial_impact": {
-            "fraud_loss_prevented": fraud_savings,
-            "fp_revenue_saved": fp_savings,
-            "total_savings": fraud_savings + fp_savings,
-            "currency": "INR",
-        },
-        "queue_stats": {
-            "pending_review": max(0, total_decisions - total_overrides),
-            "avg_review_time_minutes": 4.2,
-        },
+        "total_decisions": total_decisions,
+        "total_overrides": total_overrides,
+        "recent_decisions_24h": recent_decisions,
+        "action_distribution": action_distribution,
+        "counterintuitive_count": counterintuitive,
+        "average_savings_vs_baseline_inr": round(float(avg_savings), 2),
+        "override_rate_percent": round(override_rate, 2),
+        "timestamp": datetime.utcnow().isoformat(),
     }
