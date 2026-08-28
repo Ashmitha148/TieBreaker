@@ -1,29 +1,56 @@
-﻿import { BrowserRouter, Routes, Route } from 'react-router-dom'
-import Navbar from './components/Navbar'
-import RiskCommandCenter from './pages/RiskCommandCenter'
-import TransactionDeepDive from './pages/TransactionDeepDive'
-import QueueOracle from './pages/QueueOracle'
-import OverrideLearning from './pages/OverrideLearning'
-import PerformanceDashboard from './pages/PerformanceDashboard'
-import Configuration from './pages/Configuration'
-import SystemAudit from './pages/SystemAudit'
-import { App as CheckoutApp } from './AppCheckout'
+import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
+import { AnimatePresence } from 'framer-motion'
+import { Toaster } from 'react-hot-toast'
+import Landing from './pages/Landing'
+import Checkout from './pages/Checkout'
+import Dashboard from './pages/Dashboard'
+import TransactionDetail from './pages/TransactionDetail'
+import Queue from './pages/Queue'
+import Learning from './pages/Learning'
+import Performance from './pages/Performance'
+import Config from './pages/Config'
+import Audit from './pages/Audit'
+
+function AnimatedRoutes() {
+  const location = useLocation()
+  return (
+    <AnimatePresence mode="wait">
+      <Routes location={location} key={location.pathname}>
+        <Route path="/" element={<Landing />} />
+        <Route path="/checkout" element={<Checkout />} />
+        <Route path="/command" element={<Dashboard />} />
+        <Route path="/transaction/:id" element={<TransactionDetail />} />
+        <Route path="/queue" element={<Queue />} />
+        <Route path="/learning" element={<Learning />} />
+        <Route path="/performance" element={<Performance />} />
+        <Route path="/config" element={<Config />} />
+        <Route path="/audit" element={<Audit />} />
+      </Routes>
+    </AnimatePresence>
+  )
+}
 
 function App() {
   return (
     <BrowserRouter>
-      <div className="min-h-screen bg-[#0B0F19] text-gray-100 font-sans">
-        <Navbar />
-        <Routes>
-          <Route path="/" element={<CheckoutApp />} />
-          <Route path="/command" element={<RiskCommandCenter />} />
-          <Route path="/transaction/:id" element={<TransactionDeepDive />} />
-          <Route path="/queue" element={<QueueOracle />} />
-          <Route path="/performance" element={<PerformanceDashboard />} />
-          <Route path="/learning" element={<OverrideLearning />} />
-          <Route path="/config" element={<Configuration />} />
-          <Route path="/audit" element={<SystemAudit />} />
-        </Routes>
+      <div className="min-h-screen text-[#f0f2f5] font-sans selection:bg-[#3395FF]/30">
+        <div className="orb-1" />
+        <div className="orb-2" />
+        <div className="orb-3" />
+        <div className="grid-bg" />
+        <Toaster
+          position="top-right"
+          toastOptions={{
+            style: {
+              background: '#080a14',
+              color: '#f0f2f5',
+              border: '1px solid rgba(255,255,255,0.06)',
+              fontSize: '12px',
+              borderRadius: '8px',
+            },
+          }}
+        />
+        <AnimatedRoutes />
       </div>
     </BrowserRouter>
   )
