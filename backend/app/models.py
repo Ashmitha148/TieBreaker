@@ -59,6 +59,10 @@ class WebhookEvent(Base):
 
 class Decision(Base):
     __tablename__ = "decisions"
+     # ... existing columns ...
+    is_counterintuitive = Column(Boolean, default=False)
+    feature_snapshot = Column(Text, nullable=True)  # ← ADD THIS
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     transaction_id = Column(String(100), index=True, nullable=False)
     fraud_prob = Column(Float, nullable=False)
