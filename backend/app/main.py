@@ -7,7 +7,7 @@ import logging
 from .database import engine, Base
 from .routes import orders, payments, webhooks
 from .routes import transactions, metrics, demo, queue, insights, audit, config as config_route
-from .routes import cost_config, stream
+from .routes import cost_config, stream, whatif
 from .startup import ensure_models_trained
 from .config import settings
 from .ml.models import get_model_manager
@@ -74,7 +74,7 @@ app.include_router(audit.router, prefix="/api")
 app.include_router(config_route.router, prefix="/api")
 app.include_router(cost_config.router, prefix="/api")
 app.include_router(stream.router, prefix="/api")
-
+app.include_router(whatif.router, prefix="/api")
 
 @app.get("/health", tags=["Health"])
 def health_check():
