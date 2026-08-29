@@ -56,6 +56,15 @@ def _extract_features(record, feature_names):
 
 class ModelManager:
     _instance = None
+    
+    def current_version_info(self):
+        return {
+            "version": "2.0.0",
+            "fraud_model_loaded": self.fraud_model is not None,
+            "fp_model_loaded": self.fp_model is not None,
+            "review_model_loaded": self.review_model is not None,
+        }
+    
 
     def __new__(cls):
         if cls._instance is None:

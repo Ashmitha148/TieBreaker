@@ -1,95 +1,85 @@
 ﻿from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field
+from typing import Optional
 import json
-import random
-import uuid
-import numpy as np
+import logging
 
 from ..database import get_db
 from ..models import Decision, Override, AuditLog
 from ..services.strike_selector import calculate_action_losses, threshold_baseline_decision
 from ..ml.predictor import predict_transaction
 from ..ml.models import get_model_manager
+from ..services.velocity_engine import get_velocity_engine
 from ..config import settings
 
 router = APIRouter()
+logger = logging.getLogger("tiebreaker.transactions")
 
 
-MERCHANT_PROFILES = {
-    "Retail": {"avg_amount": 45000, "ltv_base": 80000},
-    "SaaS": {"avg_amount": 150000, "ltv_base": 600000},
-    "B2B": {"avg_amount": 500000, "ltv_base": 2000000},
-    "Food": {"avg_amount": 25000, "ltv_base": 40000},
-    "Travel": {"avg_amount": 350000, "ltv_base": 500000},
-    "EdTech": {"avg_amount": 120000, "ltv_base": 300000},
-}
+class TransactionRequest(BaseModel):
+    transaction_id: str = Field(..., min_length=1)
+    customer_id: str = Field(..., min_length=1)
+    amount: float = Field(..., gt=0)
+    ltv: float = Field(..., ge=0)
+    merchant_category: str = "Retail"
+    device_change_flag: int = 0
+    geo_mismatch_flag: int = 0
+    is_cross_border: int = 0
+    hour_of_day: int = Field(12, ge=0, le=23)
+    customer_tenure_days: int = Field(365, ge=0)
+    customer_tx_count_30d: int = Field(10, ge=0)
+    customer_refund_rate: float = Field(0.0, ge=0, le=1)
+    payment_method: str = "upi"
+    device_id: Optional[str] = None
 
 
-def _generate_new_record(transaction_id: str, merchant_category: str = None) -> dict:
-    """Generate a realistic synthetic record for demo/seed ONLY."""
-    if merchant_category is None:
-        merchant_category = random.choice(list(MERCHANT_PROFILES.keys()))
+def _get_velocity_engine():
+    return get_velocity_engine(
+        redis_url=settings.REDIS_URL or "redis://localhost:6379/0",
+        fail_silent=True,
+    )
 
-    profile = MERCHANT_PROFILES[merchant_category]
-    amount = max(1000, int(random.gauss(profile["avg_amount"], profile["avg_amount"] * 0.4)))
-    tenure = random.randint(7, 1500)
-    ltv = int(profile["ltv_base"] * (0.5 + tenure / 2000) * random.uniform(0.8, 1.5))
 
-    return {
-        "transaction_id": transaction_id,
-        "amount": amount,
-        "ltv": ltv,
-        "velocity_1h": random.randint(1, 20),
-        "velocity_24h": random.randint(5, 80),
-        "device_change_flag": random.choice([0, 1]),
-        "geo_mismatch_flag": random.choice([0, 1]),
-        "is_cross_border": random.choice([0, 1]),
-        "hour_of_day": random.randint(0, 23),
-        "customer_tenure_days": tenure,
-        "customer_tx_count_30d": random.randint(1, 120),
-        "customer_refund_rate": round(random.random(), 2),
-        "merchant_category": merchant_category,
-        "payment_method": random.choice(["upi", "card", "netbanking", "wallet"]),
-    }
+def _get_velocity_from_redis(engine, customer_id: str, device_id: str = None) -> dict:
+    try:
+        velocity = engine.get_velocity(customer_id, device_id)
+        velocity["source"] = "redis"
+        return velocity
+    except Exception:
+        logger.exception("Redis velocity lookup failed for customer_id=%s", customer_id)
+        return {"velocity_1h": 0, "velocity_24h": 0, "device_tx_count_1h": 0, "source": "fallback_zero"}
 
 
 @router.post("/transactions")
-def create_transaction(
-    transaction_id: str,
-    amount: float,
-    ltv: float,
-    merchant_category: str = "Retail",
-    velocity_1h: int = 0,
-    velocity_24h: int = 0,
-    device_change_flag: int = 0,
-    geo_mismatch_flag: int = 0,
-    is_cross_border: int = 0,
-    hour_of_day: int = 12,
-    customer_tenure_days: int = 365,
-    customer_tx_count_30d: int = 10,
-    customer_refund_rate: float = 0.0,
-    payment_method: str = "upi",
-    db: Session = Depends(get_db),
-):
-    """
-    Ingest a REAL transaction (from Razorpay webhook, CSV upload, or test mode).
-    Runs dual-model inference and persists the decision.
-    """
+def create_transaction(payload: TransactionRequest, db: Session = Depends(get_db)):
+    existing = db.query(Decision).filter(Decision.transaction_id == payload.transaction_id).first()
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Transaction {payload.transaction_id} was already scored (decision_id={existing.id}).",
+        )
+
+    engine = _get_velocity_engine()
+    velocity = _get_velocity_from_redis(engine, payload.customer_id, payload.device_id)
+
     record = {
-        "transaction_id": transaction_id,
-        "amount": amount,
-        "ltv": ltv,
-        "velocity_1h": velocity_1h,
-        "velocity_24h": velocity_24h,
-        "device_change_flag": device_change_flag,
-        "geo_mismatch_flag": geo_mismatch_flag,
-        "is_cross_border": is_cross_border,
-        "hour_of_day": hour_of_day,
-        "customer_tenure_days": customer_tenure_days,
-        "customer_tx_count_30d": customer_tx_count_30d,
-        "customer_refund_rate": customer_refund_rate,
-        "merchant_category": merchant_category,
-        "payment_method": payment_method,
+        "transaction_id": payload.transaction_id,
+        "amount": payload.amount,
+        "ltv": payload.ltv,
+        "velocity_1h": velocity.get("velocity_1h", 0),
+        "velocity_24h": velocity.get("velocity_24h", 0),
+        "device_change_flag": payload.device_change_flag,
+        "geo_mismatch_flag": payload.geo_mismatch_flag,
+        "is_cross_border": payload.is_cross_border,
+        "hour_of_day": payload.hour_of_day,
+        "customer_tenure_days": payload.customer_tenure_days,
+        "customer_tx_count_30d": payload.customer_tx_count_30d,
+        "customer_refund_rate": payload.customer_refund_rate,
+        "merchant_category": payload.merchant_category,
+        "payment_method": payload.payment_method,
+        "customer_id": payload.customer_id,
+        "device_id": payload.device_id,
     }
 
     prediction = predict_transaction(record)
@@ -98,7 +88,7 @@ def create_transaction(
     record["fraud_prob"] = fraud_prob
     record["fp_prob"] = fp_prob
 
-    result = calculate_action_losses(fraud_prob, fp_prob, amount, ltv)
+    result = calculate_action_losses(fraud_prob, fp_prob, payload.amount, payload.ltv)
     baseline = threshold_baseline_decision(fraud_prob)
 
     savings = round(
@@ -106,17 +96,22 @@ def create_transaction(
         2,
     )
 
+    try:
+        model_meta = get_model_manager().current_version_info()
+    except AttributeError:
+        model_meta = {"version": "2.0.0"}
+
     decision = Decision(
-        transaction_id=transaction_id,
+        transaction_id=payload.transaction_id,
         fraud_prob=fraud_prob,
         fp_prob=fp_prob,
-        amount=amount,
-        ltv=ltv,
-        merchant_category=merchant_category,
+        amount=payload.amount,
+        ltv=payload.ltv,
+        merchant_category=payload.merchant_category,
         recommended_action=result["recommended_action"],
         baseline_action=baseline,
         savings_vs_baseline=savings,
-        model_version="2.0.0",
+        model_version=model_meta.get("version", "unknown"),
         config_version="1.0",
         is_counterintuitive=result["is_counterintuitive"],
         feature_snapshot=json.dumps(record),
@@ -125,28 +120,43 @@ def create_transaction(
     db.commit()
     db.refresh(decision)
 
+    db.add(AuditLog(
+        user="system",
+        action="DECISION_CREATED",
+        entity_type="Decision",
+        entity_id=payload.transaction_id,
+        details=json.dumps({
+            "recommended_action": result["recommended_action"],
+            "velocity_source": velocity.get("source"),
+            "model_version": model_meta.get("version", "unknown"),
+        }),
+        model_version=model_meta.get("version", "unknown"),
+    ))
+    db.commit()
+
+    try:
+        engine.record_transaction(payload.customer_id, payload.amount, payload.device_id)
+    except Exception:
+        logger.exception("Failed to record transaction into Redis for customer_id=%s", payload.customer_id)
+
     return {
-        "transaction_id": transaction_id,
+        "transaction_id": payload.transaction_id,
         "recommended_action": result["recommended_action"],
         "baseline_action": baseline,
         "fraud_probability": fraud_prob,
         "fp_probability": fp_prob,
         "savings_vs_baseline": savings,
         "is_counterintuitive": result["is_counterintuitive"],
+        "velocity": velocity,
+        "model_version": model_meta.get("version", "unknown"),
     }
 
 
 @router.get("/transactions/{transaction_id}")
 def get_transaction(transaction_id: str, db: Session = Depends(get_db)):
-    """
-    Get full decision payload for a transaction.
-    In production: returns 404 if not found (no auto-generation).
-    In development: auto-generates synthetic data for demo purposes.
-    """
     decision = db.query(Decision).filter(Decision.transaction_id == transaction_id).first()
 
     if decision:
-        # Use stored snapshot for consistent features
         if decision.feature_snapshot:
             record = json.loads(decision.feature_snapshot)
         else:
@@ -177,17 +187,45 @@ def get_transaction(transaction_id: str, db: Session = Depends(get_db)):
         baseline = threshold_baseline_decision(fraud_prob)
 
     else:
-        # PRODUCTION: Do NOT auto-generate fake data
         if settings.ENVIRONMENT == "production":
             raise HTTPException(
                 status_code=404,
                 detail=f"Transaction {transaction_id} not found. Use POST /api/transactions to ingest real data.",
             )
 
-        # DEVELOPMENT ONLY: generate synthetic demo data
-        record = _generate_new_record(transaction_id)
-        prediction = predict_transaction(record)
+        import random, uuid
+        MERCHANT_PROFILES = {
+            "Retail": {"avg_amount": 45000, "ltv_base": 80000},
+            "SaaS": {"avg_amount": 150000, "ltv_base": 600000},
+            "B2B": {"avg_amount": 500000, "ltv_base": 2000000},
+            "Food": {"avg_amount": 25000, "ltv_base": 40000},
+            "Travel": {"avg_amount": 350000, "ltv_base": 500000},
+            "EdTech": {"avg_amount": 120000, "ltv_base": 300000},
+        }
+        merchant_category = random.choice(list(MERCHANT_PROFILES.keys()))
+        profile = MERCHANT_PROFILES[merchant_category]
+        amount = max(1000, int(random.gauss(profile["avg_amount"], profile["avg_amount"] * 0.4)))
+        tenure = random.randint(7, 1500)
+        ltv = int(profile["ltv_base"] * (0.5 + tenure / 2000) * random.uniform(0.8, 1.5))
 
+        record = {
+            "transaction_id": transaction_id,
+            "amount": amount,
+            "ltv": ltv,
+            "velocity_1h": random.randint(1, 20),
+            "velocity_24h": random.randint(5, 80),
+            "device_change_flag": random.choice([0, 1]),
+            "geo_mismatch_flag": random.choice([0, 1]),
+            "is_cross_border": random.choice([0, 1]),
+            "hour_of_day": random.randint(0, 23),
+            "customer_tenure_days": tenure,
+            "customer_tx_count_30d": random.randint(1, 120),
+            "customer_refund_rate": round(random.random(), 2),
+            "merchant_category": merchant_category,
+            "payment_method": random.choice(["upi", "card", "netbanking", "wallet"]),
+        }
+
+        prediction = predict_transaction(record)
         fraud_prob = prediction["fraud_probability"]
         fp_prob = prediction["fp_probability"]
         record["fraud_prob"] = fraud_prob
@@ -266,10 +304,7 @@ def override_transaction(
 
     decision = db.query(Decision).filter(Decision.transaction_id == transaction_id).first()
     if not decision:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Transaction {transaction_id} not found.",
-        )
+        raise HTTPException(status_code=404, detail=f"Transaction {transaction_id} not found.")
 
     override = Override(
         decision_id=decision.id,
@@ -305,7 +340,6 @@ def override_transaction(
 
 @router.get("/transactions/{transaction_id}/shap-chart")
 def get_shap_chart(transaction_id: str, db: Session = Depends(get_db)):
-    """Generate a SHAP waterfall chart PNG for a transaction."""
     import io
     import base64
     import matplotlib
@@ -314,12 +348,8 @@ def get_shap_chart(transaction_id: str, db: Session = Depends(get_db)):
     import shap
 
     decision = db.query(Decision).filter(Decision.transaction_id == transaction_id).first()
-
     if not decision or not decision.feature_snapshot:
-        raise HTTPException(
-            status_code=404,
-            detail="Transaction or feature snapshot not found",
-        )
+        raise HTTPException(status_code=404, detail="Transaction or feature snapshot not found")
 
     record = json.loads(decision.feature_snapshot)
     mgr = get_model_manager()
@@ -328,12 +358,7 @@ def get_shap_chart(transaction_id: str, db: Session = Depends(get_db)):
     for f in mgr.fraud_features:
         if f == "merchant_category_encoded":
             features.append(
-                {
-                    "Retail": 0,
-                    "SaaS": 1,
-                    "B2B": 2,
-                    "Food": 3,
-                }.get(record.get("merchant_category", "Retail"), 0)
+                {"Retail": 0, "SaaS": 1, "B2B": 2, "Food": 3}.get(record.get("merchant_category", "Retail"), 0)
             )
         else:
             features.append(record.get(f, 0))
@@ -343,12 +368,10 @@ def get_shap_chart(transaction_id: str, db: Session = Depends(get_db)):
 
     explainer = shap.TreeExplainer(mgr.fraud_model)
     sv = explainer.shap_values([features])
-
     if isinstance(sv, list):
         sv = sv[1][0]
 
     plt.figure(figsize=(10, 6))
-
     shap.waterfall_plot(
         shap.Explanation(
             values=np.array(sv),
@@ -363,19 +386,12 @@ def get_shap_chart(transaction_id: str, db: Session = Depends(get_db)):
         max_display=10,
         show=False,
     )
-
     plt.title(f"SHAP: {transaction_id}")
     plt.tight_layout()
 
     buf = io.BytesIO()
-    plt.savefig(
-        buf,
-        format="png",
-        dpi=150,
-        bbox_inches="tight",
-    )
+    plt.savefig(buf, format="png", dpi=150, bbox_inches="tight")
     plt.close()
-
     buf.seek(0)
 
     return {

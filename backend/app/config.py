@@ -56,3 +56,4 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+REDIS_URL: str = "redis://localhost:6379/0"
