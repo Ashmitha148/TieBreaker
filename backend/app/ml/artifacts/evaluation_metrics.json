@@ -1,16 +1,23 @@
 {
-  "evaluated_at": "2026-08-29T06:50:23.216769",
+  "evaluated_at": "2026-08-30T04:44:57.714307",
+  "leakage_check": {
+    "verified": true,
+    "train_size": 4411,
+    "test_size": 1769,
+    "overlap_count": 0,
+    "overlap_ids_sample": []
+  },
   "test_set": {
     "total_records": 1769,
     "fraud_rate": 0.1888,
     "fp_rate": 0.0735,
     "merchant_distribution": {
       "SaaS": 263,
-      "Services": 294,
-      "Retail": 334,
-      "Logistics": 314,
       "B2B": 199,
-      "Food": 365
+      "Retail": 334,
+      "Food": 365,
+      "Services": 294,
+      "Logistics": 314
     }
   },
   "models": {
@@ -52,8 +59,8 @@
           "recall": 1.0,
           "f1": 1.0
         },
-        "Services": {
-          "count": 294,
+        "B2B": {
+          "count": 199,
           "precision": 1.0,
           "recall": 1.0,
           "f1": 1.0
@@ -64,20 +71,20 @@
           "recall": 1.0,
           "f1": 1.0
         },
-        "Logistics": {
-          "count": 314,
-          "precision": 1.0,
-          "recall": 1.0,
-          "f1": 1.0
-        },
-        "B2B": {
-          "count": 199,
-          "precision": 1.0,
-          "recall": 1.0,
-          "f1": 1.0
-        },
         "Food": {
           "count": 365,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "Services": {
+          "count": 294,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0
+        },
+        "Logistics": {
+          "count": 314,
           "precision": 1.0,
           "recall": 1.0,
           "f1": 1.0
@@ -118,11 +125,11 @@
           "recall": 0.0,
           "f1": 0.0
         },
-        "Services": {
-          "count": 294,
+        "B2B": {
+          "count": 199,
           "precision": 0.5,
-          "recall": 0.0714,
-          "f1": 0.125
+          "recall": 0.6316,
+          "f1": 0.5581
         },
         "Retail": {
           "count": 334,
@@ -130,30 +137,30 @@
           "recall": 0.0714,
           "f1": 0.1333
         },
-        "Logistics": {
-          "count": 314,
-          "precision": 1.0,
-          "recall": 0.1739,
-          "f1": 0.2963
-        },
-        "B2B": {
-          "count": 199,
-          "precision": 0.5,
-          "recall": 0.6316,
-          "f1": 0.5581
-        },
         "Food": {
           "count": 365,
           "precision": 0.0,
           "recall": 0.0,
           "f1": 0.0
+        },
+        "Services": {
+          "count": 294,
+          "precision": 0.5,
+          "recall": 0.0714,
+          "f1": 0.125
+        },
+        "Logistics": {
+          "count": 314,
+          "precision": 1.0,
+          "recall": 0.1739,
+          "f1": 0.2963
         }
       }
     }
   },
   "limitations": [
-    "Fraud model achieves perfect separation on synthetic data \u2014 real-world performance will degrade due to distribution shift, adversarial patterns, and label noise. This score reflects clean synthetic features, not production reality.",
+    "Fraud model precision/recall are both >= 97% on synthetic data \u2014 real-world performance will degrade due to distribution shift, adversarial patterns, and label noise. This score reflects clean synthetic features, not production reality.",
     "FP model recall is 14.6% \u2014 it catches only a minority of false positives. This is expected: false positives are inherently harder to predict than fraud (legitimate transactions have high variance). In production, this would be improved with merchant-specific features and behavioral biometrics."
   ],
-  "honest_assessment": "The fraud model separates cleanly on this synthetic dataset, which is expected given strong feature-engineered signals (velocity, geo-mismatch, device changes). The FP model is the harder problem \u2014 predicting which legitimate transactions look risky \u2014 and its lower recall reflects real-world difficulty. For production, we would retrain with merchant-specific thresholds, behavioral embeddings, and continuous feedback from analyst overrides."
+  "honest_assessment": "The fraud model scored 100.0% precision and 100.0% recall on 1769 held-out records. This near-perfect separation is expected on engineered synthetic features and should not be read as production performance \u2014 real traffic has label noise, adversarial adaptation, and distribution shift that synthetic data does not capture. The false-positive model scored 59.4% precision and 14.6% recall \u2014 predicting which legitimate transactions will look risky is inherently harder than detecting fraud itself, since legitimate behavior has far higher variance."
 }

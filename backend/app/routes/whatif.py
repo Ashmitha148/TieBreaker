@@ -6,12 +6,13 @@ Useful for: judge demos, analyst training, merchant onboarding.
 
 import logging
 import uuid
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional
 
 from ..services.strike_selector import calculate_action_losses, threshold_baseline_decision
 from ..ml.predictor import predict_transaction
+from ..auth import verify_api_key
 
 router = APIRouter()
 logger = logging.getLogger("tiebreaker.whatif")
@@ -38,7 +39,7 @@ class WhatIfRequest(BaseModel):
 
 
 @router.post("/what-if")
-def what_if_simulator(payload: WhatIfRequest):
+def what_if_simulator(payload: WhatIfRequest, _api_key: str = Depends(verify_api_key)):
     """
     Simulate a TieBreaker decision with custom parameters.
     Returns: recommended action, baseline action, losses for all 4 actions, and savings.
@@ -70,8 +71,10 @@ def what_if_simulator(payload: WhatIfRequest):
     # with no warning.
     shap_drivers = []
     used_model = False
+    prediction = None
 
-    if payload.override_fraud_prob is None or payload.override_fp_prob is None:
+    needs_model = payload.override_fraud_prob is None or payload.override_fp_prob is None
+    if needs_model:
         try:
             prediction = predict_transaction(record)
         except Exception:
@@ -80,8 +83,15 @@ def what_if_simulator(payload: WhatIfRequest):
         used_model = True
         shap_drivers = prediction["shap_drivers"]
 
-    fraud_prob = payload.override_fraud_prob if payload.override_fraud_prob is not None else prediction["fraud_probability"]
-    fp_prob = payload.override_fp_prob if payload.override_fp_prob is not None else prediction["fp_probability"]
+    if payload.override_fraud_prob is not None:
+        fraud_prob = payload.override_fraud_prob
+    else:
+        fraud_prob = prediction["fraud_probability"]
+
+    if payload.override_fp_prob is not None:
+        fp_prob = payload.override_fp_prob
+    else:
+        fp_prob = prediction["fp_probability"]
 
     # If only one side was overridden, the shap_drivers reflect the model
     # call but only partially explain the blended result — flag that clearly

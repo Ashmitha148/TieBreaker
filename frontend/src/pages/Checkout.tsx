@@ -7,7 +7,7 @@ import {
 import TransactionPipeline from '../components/TransactionPipeline'
 import AppSidebar from '../components/AppSidebar'
 import StatusBar from '../components/StatusBar'
-import { API_URL } from '../config'
+import { API_URL, apiHeaders } from '../config'
 
 export default function Checkout() {
   const [amount, setAmount] = useState('500')
@@ -18,7 +18,7 @@ export default function Checkout() {
   const [result, setResult] = useState<any>(null)
   const [pipelineSteps, setPipelineSteps] = useState<any[]>([])
 
-  const startPipeline = (txId: string) => {
+  const startPipeline = (txId: string, decision?: any) => {
     const steps = [
       { id: '1', label: 'Payment', detail: 'UPI / Card', status: 'pending' as const, icon: Zap },
       { id: '2', label: 'Velocity', detail: 'Checking...', status: 'pending' as const, icon: Clock },
@@ -31,31 +31,59 @@ export default function Checkout() {
     setStage('processing')
 
     setTimeout(() => setPipelineSteps(s => s.map((step, i) => i === 0 ? { ...step, status: 'completed', detail: '₹' + amount, timestamp: '14:23:01.000' } : step)), 400)
-    setTimeout(() => setPipelineSteps(s => s.map((step, i) => i === 1 ? { ...step, status: 'completed', detail: '12 txns/hr', timestamp: '14:23:01.120' } : step)), 900)
-    setTimeout(() => setPipelineSteps(s => s.map((step, i) => i === 2 ? { ...step, status: 'completed', detail: 'prob: 0.72', timestamp: '14:23:01.280' } : step)), 1400)
-    setTimeout(() => setPipelineSteps(s => s.map((step, i) => i === 3 ? { ...step, status: 'completed', detail: 'prob: 0.35', timestamp: '14:23:01.310' } : step)), 1800)
+    setTimeout(() => setPipelineSteps(s => s.map((step, i) => i === 1 ? { ...step, status: 'completed', detail: decision?.velocity_source || 'velocity', timestamp: '14:23:01.120' } : step)), 900)
+    setTimeout(() => setPipelineSteps(s => s.map((step, i) => i === 2 ? { ...step, status: 'completed', detail: decision ? `prob: ${decision.fraud_probability}` : 'n/a', timestamp: '14:23:01.280' } : step)), 1400)
+    setTimeout(() => setPipelineSteps(s => s.map((step, i) => i === 3 ? { ...step, status: 'completed', detail: decision ? `prob: ${decision.fp_probability}` : 'n/a', timestamp: '14:23:01.310' } : step)), 1800)
     setTimeout(() => {
-      const rec = Math.random() > 0.5 ? 'REVIEW' : 'ALLOW'
+      const rec = decision?.recommended_action || 'UNAVAILABLE'
       setPipelineSteps(s => s.map((step, i) => i === 4 ? { ...step, status: 'active', detail: rec, timestamp: '14:23:01.340' } : step))
-      setResult({ transaction_id: txId, amount: Number(amount), recommended_action: rec, fraud_probability: 0.72, fp_probability: 0.35, is_counterintuitive: rec === 'REVIEW' })
+      setResult(decision || { transaction_id: txId, amount: Number(amount), recommended_action: rec, fraud_probability: null, fp_probability: null, is_counterintuitive: false })
     }, 2200)
     setTimeout(() => setPipelineSteps(s => s.map((step, i) => i === 5 ? { ...step, status: 'completed', detail: 'Done', timestamp: '14:23:01.400' } : step)), 2800)
     setTimeout(() => setStage('result'), 3200)
   }
 
   const handlePay = async () => {
+    const txId = 'pay_' + Math.random().toString(36).slice(2, 10)
     try {
-      const res = await fetch(`${API_URL}/api/create-order`, {
+      await fetch(`${API_URL}/api/orders`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ amount: Number(amount) * 100, currency: 'INR' })
       })
-      if (!res.ok) throw new Error('Backend not ready')
-      const data = await res.json()
-      startPipeline(data.transaction_id || 'pay_' + Math.random().toString(36).slice(2, 10))
     } catch {
-      startPipeline('pay_' + Math.random().toString(36).slice(2, 10))
+      // Order creation requires Razorpay keys; checkout scoring still runs below.
     }
+
+    let decision: any = null
+    try {
+      const scored = await fetch(`${API_URL}/api/transactions`, {
+        method: 'POST',
+        headers: apiHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          transaction_id: txId,
+          customer_id: email || phone || 'checkout-customer',
+          amount: Number(amount),
+          ltv: Math.max(Number(amount) * 8, 1000),
+          payment_method: method,
+          merchant_category: 'Retail',
+        }),
+      })
+      if (!scored.ok) throw new Error('Decision endpoint failed')
+      const data = await scored.json()
+      decision = {
+        transaction_id: data.transaction_id,
+        amount: Number(amount),
+        recommended_action: data.recommended_action,
+        fraud_probability: data.fraud_probability,
+        fp_probability: data.fp_probability,
+        is_counterintuitive: data.is_counterintuitive,
+        velocity_source: data.velocity_source,
+      }
+    } catch {
+      decision = null
+    }
+    startPipeline(txId, decision)
   }
 
   return (
@@ -163,8 +191,8 @@ export default function Checkout() {
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                       {[
                         { label: 'Amount', value: `₹${result.amount.toLocaleString()}`, color: '#3395FF' },
-                        { label: 'Fraud Prob', value: `${(result.fraud_probability * 100).toFixed(0)}%`, color: '#ef4444' },
-                        { label: 'FP Prob', value: `${(result.fp_probability * 100).toFixed(0)}%`, color: '#06b6d4' },
+                        { label: 'Fraud Prob', value: result.fraud_probability == null ? 'n/a' : `${(result.fraud_probability * 100).toFixed(0)}%`, color: '#ef4444' },
+                        { label: 'FP Prob', value: result.fp_probability == null ? 'n/a' : `${(result.fp_probability * 100).toFixed(0)}%`, color: '#06b6d4' },
                         { label: 'Confidence', value: 'High', color: '#3395FF' },
                       ].map((s) => (
                         <div key={s.label} className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06]">

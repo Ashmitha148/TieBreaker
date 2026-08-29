@@ -19,7 +19,7 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 
 @pytest.fixture(scope="function")
 def db():
-    from backend.app.models import Decision  # noqa: F401
+    from backend.app import models as _models  # noqa: F401
     Base.metadata.create_all(bind=engine)
     session = TestingSessionLocal()
     try:

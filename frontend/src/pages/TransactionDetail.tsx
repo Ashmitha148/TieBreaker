@@ -20,7 +20,7 @@ export default function TransactionDetail() {
   const [overrideReason, setOverrideReason] = useState('')
 
   useEffect(() => {
-    fetch(`${API_URL}/api/transaction/${id}`)
+    fetch(`${API_URL}/api/transactions/${id}`)
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(d => setTx(d))
       .catch(() => {

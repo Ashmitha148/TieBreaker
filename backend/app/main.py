@@ -4,13 +4,14 @@ from contextlib import asynccontextmanager
 import asyncio
 import logging
 
-from .database import engine, Base
+from .database import engine, Base, ensure_sqlite_decision_columns
 from .routes import orders, payments, webhooks
 from .routes import transactions, metrics, demo, queue, insights, audit, config as config_route
-from .routes import cost_config, stream, whatif
+from .routes import cost_config, stream, whatif, learning
 from .startup import ensure_models_trained
 from .config import settings
 from .ml.models import get_model_manager
+from . import models as _models  # noqa: F401 — register tables on Base.metadata
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ async def lifespan(app: FastAPI):
     # Only auto-create tables in development (production should use Alembic migrations)
     if settings.ENVIRONMENT == "development":
         Base.metadata.create_all(bind=engine)
+        ensure_sqlite_decision_columns()
 
     # Train models in background in dev; in production, validate artifacts exist
     if settings.ENVIRONMENT == "development":
@@ -75,6 +77,7 @@ app.include_router(config_route.router, prefix="/api")
 app.include_router(cost_config.router, prefix="/api")
 app.include_router(stream.router, prefix="/api")
 app.include_router(whatif.router, prefix="/api")
+app.include_router(learning.router, prefix="/api")
 
 @app.get("/health", tags=["Health"])
 def health_check():

@@ -1,261 +1,129 @@
 # TieBreaker
 
-AI-Powered Payment Risk Intelligence — built for Razorpay Buildathon 2026.
+Cost-aware payment risk decisioning for **Razorpay Buildathon 2026, Track 2 (AI Risk Manager)**.
 
-## The Problem
+TieBreaker scores a transaction with two models (fraud and false-positive), then picks ALLOW / VERIFY / REVIEW / BLOCK by expected rupee loss — not by a single threshold. This README describes what is actually in this repository and what the evaluation script produced on a held-out test set. It does not invent business-impact percentages.
 
-Payment fraud costs Indian businesses over Rs 1,200 crore every year. So companies build fraud detection systems. But here's the catch:
+## Held-out metrics (from `ml/evaluation.py`, this run)
 
-- Block too aggressively -> false positives -> angry customers -> churn -> revenue loss
-- Allow too liberally -> fraud losses -> chargebacks -> merchant penalties
+Leakage check: **PASS** — 4411 train IDs, 1769 test IDs, **0 overlap**.
 
-Existing systems optimize for accuracy. They don't account for the fact that blocking a good customer often costs more than letting a small fraud through. A high-LTV customer blocked once has a 40% chance of never coming back. That single mistake can cost Rs 50,000 in lifetime value — way more than the Rs 2,000 fraud you just stopped.
+Test set: 1769 records · fraud rate 18.9% · false-positive rate 7.3%.
 
-## What TieBreaker Does
+| Model | Precision | Recall | F1 | PR-AUC | ROC-AUC | Brier |
+|-------|-----------|--------|----|--------|---------|-------|
+| Fraud Detector | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 0.0000 |
+| False Positive | 0.594 | 0.146 | 0.235 | 0.344 | 0.841 | 0.0578 |
 
-TieBreaker treats fraud detection as an economics problem, not a classification problem.
+Fraud confusion matrix: `[[1435, 0], [0, 334]]`. FP confusion matrix: `[[1626, 13], [111, 19]]`.
 
-Instead of one fraud model making binary allow/block decisions, we run two models in parallel:
+The fraud model’s entire feature importance is `velocity_1h = 1.0` (every other fraud feature is 0.0). That, plus precision and recall both ≥ 0.97, is a **synthetic-data artifact**: labels in `backend/app/ml/data.py` are generated from the same velocity/geo/device rules the model then re-learns. Do not read 1.000 / 1.000 as production performance.
 
-1. **Fraud Model** — trained on confirmed fraud labels
-2. **False Positive Model** — trained on legitimate transactions that were previously blocked
+The false-positive model is the honest one on this set: 14.6% recall, Brier 0.0578. Per-merchant FP F1 on this run: B2B 0.558, Logistics 0.296, Retail 0.133, Services 0.125, Food 0.000, SaaS 0.000.
 
-Then the Strike Decision Engine computes the expected financial loss for every possible action (Allow, Verify, Review, Block) and picks the one that loses the least money.
+Full JSON (including per-merchant tables and the generated limitations write-up) is at `backend/app/ml/artifacts/evaluation_metrics.json`. Serve it via `GET /api/metrics/model-performance`.
 
-This naturally produces what we call **counterintuitive decisions** — like choosing REVIEW over BLOCK for a high-fraud transaction when the customer's lifetime value justifies the analyst cost.
+## Implemented and demoable today
 
-### How We're Different
+- Dual sklearn `GradientBoostingClassifier` artifacts (`fraud_model.pkl`, `fp_model.pkl`) plus a linear review-time model
+- Held-out evaluation script: `ml/evaluation.py` (precision, recall, F1, PR-AUC, ROC-AUC, Brier, confusion matrix, per-merchant breakdown, feature importance, leakage check, dynamic honest assessment)
+- `POST /api/transactions` — Pydantic body, required `customer_id`, Redis velocity with explicit `velocity_source` (`redis` or `fallback_zero`), idempotency on `transaction_id`, AuditLog write, model version from artifact metadata
+- `POST /api/what-if` — independent probability overrides, sensitivity on the same fraud/FP probabilities as the decision
+- `GET/POST /api/learning/*` — override stats with all-time **and** 7-day retrain triggers; `trigger-retrain` reports a recommendation and **does not train a new model**
+- Razorpay webhook `POST /api/webhooks/razorpay` authenticated **only** by HMAC-SHA256 + `x-razorpay-event-id` idempotency (no API key)
+- API key auth (`X-API-Key` / `TIEBREAKER_API_KEY`) on decisioning, what-if, and learning endpoints
+- FastAPI + React (Vite) UI: checkout, command center, queue, learning stats, what-if panel
+- Optional Redis velocity; if Redis is down the API still scores and says so
+- Docker Compose for backend + Postgres + Redis (`docker-compose.yml`); backend `Dockerfile`
 
-| Traditional | TieBreaker |
-|-------------|------------|
-| Single fraud model | Dual models: Fraud + False Positive |
-| Optimize for accuracy | Optimize for financial loss |
-| Binary Allow/Block | 4-action space: Allow, Verify, Review, Block |
-| Static thresholds | Dynamic, learnable thresholds |
-| Black-box decisions | SHAP explainability + analyst override |
-| No cost awareness | Rupee-weighted cost optimization |
+## Planned, not yet built
 
-## Architecture
+- JWT sessions (not implemented; API key is what exists)
+- Automatic model retraining from overrides (the learning endpoint is a recommendation report)
+- Production SHAP waterfall for every request (TreeExplainer is used when `shap` loads; otherwise heuristic drivers)
+- Graph / device-fingerprint / multi-merchant federation features described in older architecture notes
+- A live public demo URL — `https://tiebreaker-demo.vercel.app` returns 404 and is not linked here
+- Claimed XGBoost models — training code uses sklearn gradient boosting, not XGBoost, even though `xgboost` is listed in requirements
 
-```
-Checkout UI (React) -> FastAPI Backend -> Razorpay Orders API
-                                |
-                    Velocity Engine (Redis)
-                                |
-              +-----------------+-----------------+
-              |                 |                 |
-        Fraud Model       FP Model         LTV Estimator
-        (XGBoost)       (XGBoost)        (Heuristic)
-              |                 |                 |
-              +-----------------+-----------------+
-                                |
-                    Strike Decision Engine
-                    (Cost Optimizer)
-                                |
-              +-----------------+-----------------+
-              |                 |                 |
-           ALLOW            REVIEW             BLOCK
-         (Low risk)    (Counterintuitive)   (High risk)
-                                |
-                    Analyst Override + Learning Loop
-```
-
-## Live Demo
-
-- **Landing Page**: [https://tiebreaker-demo.vercel.app](https://tiebreaker-demo.vercel.app)
-- **Command Center**: [https://tiebreaker-demo.vercel.app/command](https://tiebreaker-demo.vercel.app/command)
-- **Checkout Demo**: [https://tiebreaker-demo.vercel.app/checkout](https://tiebreaker-demo.vercel.app/checkout)
-
-*(Replace with your actual deployed URL after pushing to Vercel)*
-
-## Key Features
-
-### Dual-Model Inference
-Two specialized models run in parallel. Fraud model scores risk. FP model scores how likely a block would be a mistake. Together they give a complete picture.
-
-### Strike Decision Engine
-Instead of threshold rules, we compute expected loss:
+## Architecture (what this repo actually deploys)
 
 ```
-Loss(ALLOW)   = P(Fraud) * Amount * FraudMultiplier
-Loss(BLOCK)   = P(FP) * LTV + FrictionCost
-Loss(REVIEW)  = AnalystCost + PartialFraudLoss + PartialFPLoss
-Loss(VERIFY)  = FrictionCost + PartialFraudLoss
+React (Vite)  --X-API-Key-->  FastAPI
+                                  |
+                    +-------------+-------------+
+                    |             |             |
+              POST /transactions  what-if    /learning/*
+                    |             |             |
+              VelocityEngine                 Postgres/SQLite
+              (Redis or zeros)               Decisions, Overrides, AuditLog
+                    |
+              sklearn GBC fraud + FP
+                    |
+              Strike cost engine → ALLOW | VERIFY | REVIEW | BLOCK
+
+Razorpay servers --HMAC--> POST /api/webhooks/razorpay
 ```
 
-Pick the action with minimum expected loss. Simple math, powerful results.
-
-### Counterintuitive Detection
-When fraud probability is high (>60%) but the recommended action is REVIEW instead of BLOCK, we flag it as counterintuitive. This tells analysts: "There's more nuance here than a simple block — a human should look."
-
-### SHAP Explainability
-Every decision comes with a feature breakdown so analysts understand WHY the model decided what it did. No black boxes.
-
-### What-If Simulator
-Analysts can drag sliders to adjust fraud and FP probabilities in real-time and see how the optimal decision changes. Useful for edge-case analysis and threshold tuning.
-
-### Continuous Learning
-Analyst overrides are logged, batched, and fed back into model retraining. The system gets smarter with every human decision.
-
-## Tech Stack
-
-**Frontend:** React 18 + TypeScript + Vite + Tailwind CSS + Framer Motion + Recharts + Lucide React
-
-**Backend:** FastAPI (Python 3.11) + XGBoost + SHAP + PostgreSQL + Redis
-
-**Infrastructure:** Docker + Docker Compose + Razorpay Orders API + Vercel (frontend) + Railway/Render (backend)
-
-## Project Structure
-
-```
-TieBreaker/
-├── frontend/
-│   ├── src/
-│   │   ├── components/     # Reusable UI pieces
-│   │   ├── pages/          # Route pages
-│   │   ├── App.tsx         # Router
-│   │   └── index.css       # Design system
-│   └── public/             # Favicon, assets
-├── backend/
-│   ├── app/
-│   │   ├── models/         # Fraud + FP models
-│   │   ├── engine/         # Strike Decision Engine
-│   │   ├── api/            # REST endpoints
-│   │   ├── webhooks/       # Razorpay webhook handlers
-│   │   └── core/           # Config, DB, utils
-│   ├── models/             # Trained XGBoost models
-│   ├── alembic/            # DB migrations
-│   ├── Dockerfile
-│   └── requirements.txt
-├── docs/                   # Architecture, API, Pitch, Demo
-├── docker-compose.yml
-└── README.md
-```
-
-## Quick Start (Local Development)
+## Quick start
 
 ```bash
-# Clone
-git clone https://github.com/yourusername/tiebreaker.git
-cd tiebreaker
+git clone https://github.com/Ashmitha148/TieBreaker.git
+cd TieBreaker
 
-# Start backend
-cd backend
-docker-compose up -d
+# Backend (from repo root or backend/)
+pip install -r backend/requirements.txt
+# copy backend/.env.example → backend/.env and set TIEBREAKER_API_KEY
+uvicorn backend.app.main:app --reload --port 8000
 
-# Start frontend
-cd ../frontend
+# Frontend
+cd frontend
+cp .env.example .env   # VITE_API_KEY must match TIEBREAKER_API_KEY
 npm install
 npm run dev
-
-# Open http://localhost:5173
 ```
 
-## Environment Variables
-
-### Backend (.env)
-
-```env
-# Database
-DATABASE_URL=postgresql://user:pass@localhost:5432/tiebreaker
-
-# Redis
-REDIS_URL=redis://localhost:6379
-
-# Razorpay
-RAZORPAY_KEY_ID=rzp_test_xxxxxxxxxxxx
-RAZORPAY_KEY_SECRET=xxxxxxxxxxxxxxxx
-
-# Webhook secret (from Razorpay Dashboard)
-RAZORPAY_WEBHOOK_SECRET=whsec_xxxxxxxxxxxx
-
-# JWT
-JWT_SECRET=your-super-secret-key
-JWT_EXPIRY_MINUTES=15
-
-# Model paths
-FRAUD_MODEL_PATH=models/fraud_xgb_v2.pkl
-FP_MODEL_PATH=models/fp_xgb_v2.pkl
-```
-
-### Frontend (.env)
-
-```env
-VITE_API_URL=http://localhost:8000
-```
-
-## Deployment
-
-### Frontend (Vercel)
+Evaluate:
 
 ```bash
-cd frontend
-npm i -g vercel
-vercel --prod
+python ml/evaluation.py
 ```
 
-Set `VITE_API_URL` in Vercel dashboard to your backend URL.
+Webhook URL to configure in Razorpay: `https://<your-backend>/api/webhooks/razorpay`.
 
-### Backend (Railway / Render / AWS)
+## Authentication
 
-```bash
-cd backend
-docker build -t tiebreaker-backend .
-docker push your-registry/tiebreaker-backend
-```
+| Surface | Auth |
+|---------|------|
+| `POST /api/transactions`, `POST /api/what-if`, `/api/learning/*` | `X-API-Key` matching `TIEBREAKER_API_KEY` |
+| `POST /api/webhooks/razorpay` | HMAC-SHA256 (`X-Razorpay-Signature`) + event-id idempotency |
+| Other GET demo routes | Unauthenticated in this build |
 
-Set environment variables in your platform dashboard.
+In `ENVIRONMENT=production`, a missing `TIEBREAKER_API_KEY` returns **500** (does not silently allow traffic). Wrong or missing header returns **401**.
 
-### Razorpay Webhook Setup
+Set the same value in Railway (`TIEBREAKER_API_KEY`) and Vercel (`VITE_API_KEY`).
 
-1. Go to Razorpay Dashboard -> Settings -> Webhooks
-2. Add webhook URL: `https://your-backend-url.com/webhooks/razorpay`
-3. Select events:
-   - `payment.captured`
-   - `payment.failed`
-   - `refund.processed`
-4. Set secret and add to `RAZORPAY_WEBHOOK_SECRET` env var
+## What broke during development and how it was fixed
 
-See docs/DEPLOYMENT.md for full instructions.
+**Silent what-if overrides.** If only one of `override_fraud_prob` / `override_fp_prob` was set, the code required both and fell through to full model inference with no warning. Overrides now apply independently; a partial override is labelled in the response. Sensitivity used hardcoded 0.5 / 0.2 instead of the transaction’s actual probabilities — it now uses the same pair as the decision.
 
-## API Endpoints
+**Leakage check that did not stop the run.** Train/test ID overlap was printed as FAIL and then metrics were still written. `ml/evaluation.py` now exits with status 1 and refuses to publish metrics if overlap exists or IDs cannot be read. Empty-string IDs are not treated as a fake overlap.
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| /api/create-order | POST | Create Razorpay order + score transaction |
-| /api/metrics | GET | System-wide performance metrics |
-| /api/queue | GET | Priority-ranked review queue |
-| /api/transaction/{id} | GET | Deep dive with SHAP + timeline |
-| /api/audit | GET | Decision and override audit trail |
-| /api/insights | GET | Before/after learning metrics |
-| /api/config | GET/POST | System parameter configuration |
-| /webhooks/razorpay | POST | Razorpay webhook handler |
+**Diluted retraining trigger.** Retrain used only the all-time override rate, so a week of drift could hide inside a long quiet history. Stats now also compute a 7-day rate (10% threshold) and recommend retraining on either signal.
 
-See docs/API.md for full documentation.
+**Auth in the wrong place.** Scoring endpoints had no shared-secret check; putting an API key on the Razorpay webhook would have broken delivery. Key auth is only on decisioning / what-if / learning. The webhook is unchanged.
 
-## Business Impact
+**Redis failures looking like real zeros.** Bare `except Exception: pass` made a Redis bug indistinguishable from “customer has no recent txs.” Lookups now catch Redis/connection errors, log them, and return `velocity_source: fallback_zero`.
 
-| Metric | Before | After |
-|--------|--------|-------|
-| Fraud Loss | Rs 45L/month | Rs 12L/month (-73%) |
-| False Positive Rate | 8.2% | 2.1% (-74%) |
-| Customer Churn (fraud-related) | 3.4% | 0.9% (-74%) |
-| Analyst Review Time | 12 min | 4.2 min (-65%) |
-| Revenue Saved from FP Reduction | — | Rs 12.5L/month |
+**Stale / empty project description.** The working-tree README was empty; the last committed README advertised a 404 demo URL, `yourusername` clone text, and invented monthly-loss tables. This file is the source of truth for GitHub visitors.
 
-## Why This Wins
+## Links that resolve
 
-1. Solves a real, expensive problem — fraud + false positives cost Razorpay merchants crores
-2. Novel approach — cost optimization instead of accuracy optimization
-3. Production-ready — full-stack, Dockerized, works offline with demo data
-4. Razorpay-native — integrates with Razorpay Orders API + webhooks, built for Indian payment patterns
-5. Explainable — SHAP + What-If + Audit trail = trust
-6. Self-improving — active learning loop from analyst overrides
+- Repository: https://github.com/Ashmitha148/TieBreaker
+- Issues: https://github.com/Ashmitha148/TieBreaker/issues
+- Docs in-repo: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/API.md](docs/API.md), [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 
-## Team
+Older docs still mention XGBoost, JWT, and 47 features. Prefer this README and the code when they disagree.
 
-Built for Razorpay Buildathon 2026.
+## License
 
----
-
-[Live Demo](https://tiebreaker-demo.vercel.app) | [Docs](docs/) | [Issues](../../issues)
+MIT (see `LICENSE` if present in the repo).

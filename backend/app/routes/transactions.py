@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 import json
 import logging
+import numpy as np
 
 from ..database import get_db
 from ..models import Decision, Override, AuditLog
@@ -12,6 +13,7 @@ from ..ml.predictor import predict_transaction
 from ..ml.models import get_model_manager
 from ..services.velocity_engine import get_velocity_engine
 from ..config import settings
+from ..auth import verify_api_key
 
 router = APIRouter()
 logger = logging.getLogger("tiebreaker.transactions")
@@ -41,18 +43,41 @@ def _get_velocity_engine():
     )
 
 
+def _redis_error_types():
+    types = [OSError, RuntimeError, ConnectionError, TimeoutError]
+    try:
+        from redis.exceptions import RedisError
+        types.append(RedisError)
+    except ImportError:
+        pass
+    return tuple(types)
+
+
 def _get_velocity_from_redis(engine, customer_id: str, device_id: str = None) -> dict:
+    zeros = {"velocity_1h": 0, "velocity_24h": 0, "device_tx_count_1h": 0, "source": "fallback_zero"}
     try:
         velocity = engine.get_velocity(customer_id, device_id)
-        velocity["source"] = "redis"
+        if velocity.get("degraded"):
+            velocity["source"] = "fallback_zero"
+        else:
+            velocity["source"] = "redis"
         return velocity
-    except Exception:
-        logger.exception("Redis velocity lookup failed for customer_id=%s", customer_id)
-        return {"velocity_1h": 0, "velocity_24h": 0, "device_tx_count_1h": 0, "source": "fallback_zero"}
+    except _redis_error_types() as exc:
+        logger.warning(
+            "Redis velocity lookup failed for customer_id=%s (%s: %s)",
+            customer_id,
+            type(exc).__name__,
+            exc,
+        )
+        return zeros
 
 
 @router.post("/transactions")
-def create_transaction(payload: TransactionRequest, db: Session = Depends(get_db)):
+def create_transaction(
+    payload: TransactionRequest,
+    db: Session = Depends(get_db),
+    _api_key: str = Depends(verify_api_key),
+):
     existing = db.query(Decision).filter(Decision.transaction_id == payload.transaction_id).first()
     if existing:
         raise HTTPException(
@@ -99,7 +124,8 @@ def create_transaction(payload: TransactionRequest, db: Session = Depends(get_db
     try:
         model_meta = get_model_manager().current_version_info()
     except AttributeError:
-        model_meta = {"version": "2.0.0"}
+        logger.warning("Model manager has no current_version_info(); using unloaded")
+        model_meta = {"version": "unloaded"}
 
     decision = Decision(
         transaction_id=payload.transaction_id,
@@ -136,8 +162,13 @@ def create_transaction(payload: TransactionRequest, db: Session = Depends(get_db
 
     try:
         engine.record_transaction(payload.customer_id, payload.amount, payload.device_id)
-    except Exception:
-        logger.exception("Failed to record transaction into Redis for customer_id=%s", payload.customer_id)
+    except _redis_error_types() as exc:
+        logger.warning(
+            "Failed to record transaction into Redis for customer_id=%s (%s: %s)",
+            payload.customer_id,
+            type(exc).__name__,
+            exc,
+        )
 
     return {
         "transaction_id": payload.transaction_id,
@@ -148,7 +179,8 @@ def create_transaction(payload: TransactionRequest, db: Session = Depends(get_db
         "savings_vs_baseline": savings,
         "is_counterintuitive": result["is_counterintuitive"],
         "velocity": velocity,
-        "model_version": model_meta.get("version", "unknown"),
+        "velocity_source": velocity.get("source", "fallback_zero"),
+        "model_version": model_meta.get("version", "unloaded"),
     }
 
 
@@ -239,6 +271,11 @@ def get_transaction(transaction_id: str, db: Session = Depends(get_db)):
             2,
         )
 
+        try:
+            synth_meta = get_model_manager().current_version_info()
+        except AttributeError:
+            synth_meta = {"version": "unloaded"}
+
         decision = Decision(
             transaction_id=transaction_id,
             fraud_prob=fraud_prob,
@@ -249,7 +286,7 @@ def get_transaction(transaction_id: str, db: Session = Depends(get_db)):
             recommended_action=result["recommended_action"],
             baseline_action=baseline,
             savings_vs_baseline=savings,
-            model_version="2.0.0",
+            model_version=synth_meta.get("version", "unloaded"),
             config_version="1.0",
             is_counterintuitive=result["is_counterintuitive"],
             feature_snapshot=json.dumps(record),

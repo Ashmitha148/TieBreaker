@@ -46,9 +46,9 @@ def ensure_models_trained():
     print("Review metrics:", review_metrics)
 
     artifacts = {
-        "fraud": {"model": fraud_model, "features": FRAUD_FEATURES, "metrics": fraud_metrics},
-        "fp": {"model": fp_model, "features": FP_FEATURES, "metrics": fp_metrics},
-        "review": {"model": review_model, "features": REVIEW_FEATURES, "metrics": review_metrics},
+        "fraud": {"model": fraud_model, "features": FRAUD_FEATURES, "metrics": fraud_metrics, "version": "gbc-fraud"},
+        "fp": {"model": fp_model, "features": FP_FEATURES, "metrics": fp_metrics, "version": "gbc-fp"},
+        "review": {"model": review_model, "features": REVIEW_FEATURES, "metrics": review_metrics, "version": "linreg-review"},
     }
 
     for name, data in artifacts.items():

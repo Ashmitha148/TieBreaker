@@ -25,7 +25,7 @@ def predict_transaction(record: Dict[str, Any]) -> Dict[str, Any]:
         "fp_probability": fp_prob,
         "review_time_minutes": review_time,
         "shap_drivers": drivers,
-        "model_version": "2.0.0",
+        "model_version": mgr.current_version_info().get("version", "unloaded"),
     }
 
 
@@ -44,4 +44,3 @@ def get_model_health() -> Dict[str, Any]:
         "fraud_metrics": mgr.fraud_metrics,
         "fp_metrics": mgr.fp_metrics,
     }
-    

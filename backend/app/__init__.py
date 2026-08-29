@@ -1,1 +1,1 @@
-
+"""TieBreaker package."""

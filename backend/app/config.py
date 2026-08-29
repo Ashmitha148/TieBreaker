@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     RAZORPAY_KEY_ID: str = ""
     RAZORPAY_KEY_SECRET: str = ""
     RAZORPAY_WEBHOOK_SECRET: str = ""
+    # Redis: Railway injects REDIS_URL. Fallback to local Redis.
+    REDIS_URL: str = "redis://localhost:6379/0"
+
+    # API key for scoring / learning endpoints (not used on Razorpay webhooks)
+    TIEBREAKER_API_KEY: str = ""
+
     # ML configuration
     ML_RANDOM_SEED: int = 42
     ML_INTERNAL_TOKEN: str = ""
@@ -56,4 +62,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-REDIS_URL: str = "redis://localhost:6379/0"

@@ -59,23 +59,20 @@ class WebhookEvent(Base):
 
 class Decision(Base):
     __tablename__ = "decisions"
-     # ... existing columns ...
-    is_counterintuitive = Column(Boolean, default=False)
-    feature_snapshot = Column(Text, nullable=True)  # ← ADD THIS
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     transaction_id = Column(String(100), index=True, nullable=False)
     fraud_prob = Column(Float, nullable=False)
     fp_prob = Column(Float, nullable=False)
     amount = Column(Float, nullable=False)
     ltv = Column(Float, nullable=False)
-    merchant_category = Column(String(50), nullable=True, index=True)  # ← NEW
+    merchant_category = Column(String(50), nullable=True, index=True)
     recommended_action = Column(String(20), nullable=False)
     baseline_action = Column(String(20), nullable=False)
     savings_vs_baseline = Column(Float, nullable=False)
-    model_version = Column(String(20), default="1.0", nullable=False)
+    model_version = Column(String(64), default="1.0", nullable=False)
     config_version = Column(String(20), default="1.0", nullable=False)
     is_counterintuitive = Column(Boolean, default=False)
+    feature_snapshot = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
@@ -109,5 +106,5 @@ class AuditLog(Base):
     entity_type = Column(String(50), nullable=False)
     entity_id = Column(String(100), nullable=False)
     details = Column(Text, nullable=True)
-    model_version = Column(String(20), nullable=True)
+    model_version = Column(String(64), nullable=True)
     config_version = Column(String(20), nullable=True)

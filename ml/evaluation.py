@@ -12,6 +12,7 @@ FIXED VERSION — changes from original:
 import csv
 import pickle
 import json
+import sys
 from pathlib import Path
 from datetime import datetime
 
@@ -68,14 +69,34 @@ def verify_no_leakage(train_path: Path, test_path: Path, id_col: str = "transact
     try:
         train = load_csv(train_path.name)
         test = load_csv(test_path.name)
-        train_ids = set(str(r.get(id_col, r.get("id", ""))) for r in train)
-        test_ids = set(str(r.get(id_col, r.get("id", ""))) for r in test)
+        def _ids(rows):
+            found = set()
+            for r in rows:
+                raw = r.get(id_col)
+                if raw is None or raw == "":
+                    raw = r.get("id", "")
+                value = str(raw).strip()
+                if value:
+                    found.add(value)
+            return found
+
+        train_ids = _ids(train)
+        test_ids = _ids(test)
+        if not train_ids or not test_ids:
+            return {
+                "verified": False,
+                "error": f"Could not read {id_col} (or id) from train/test CSVs — leakage cannot be verified.",
+                "train_size": len(train_ids),
+                "test_size": len(test_ids),
+                "overlap_count": 0,
+            }
         overlap = train_ids & test_ids
         return {
             "verified": len(overlap) == 0,
             "train_size": len(train_ids),
             "test_size": len(test_ids),
             "overlap_count": len(overlap),
+            "overlap_ids_sample": sorted(list(overlap))[:20],
         }
     except Exception as e:
         return {"verified": False, "error": str(e)}
@@ -183,8 +204,11 @@ def main():
             fp_artifact = pickle.load(f)
     except FileNotFoundError as e:
         print(f"ERROR: Missing model artifact — {e}")
-        print("Run the training script first to generate fraud_model.pkl and fp_model.pkl")
-        return
+        print("Run backend/app/ml/train_models.py first to generate fraud_model.pkl and fp_model.pkl")
+        sys.exit(1)
+    except pickle.UnpicklingError as e:
+        print(f"ERROR: Model artifact is corrupt or unreadable — {e}")
+        sys.exit(1)
 
     leakage = verify_no_leakage(DATA / "train.csv", DATA / "test.csv")
     print(f"\nLeakage check: {'PASS' if leakage.get('verified') else 'FAIL'}")
@@ -192,9 +216,14 @@ def main():
         print(f"  train={leakage['train_size']} test={leakage['test_size']} overlap={leakage['overlap_count']}")
     elif "error" in leakage:
         print(f"  Could not verify: {leakage['error']}")
+        print("  STOP: refusing to publish metrics without a verifiable train/test split.")
+        sys.exit(1)
     else:
         print(f"  FAIL — {leakage['overlap_count']} overlapping transaction IDs between train and test.")
+        if leakage.get("overlap_ids_sample"):
+            print(f"  Sample overlap IDs: {leakage['overlap_ids_sample']}")
         print("  STOP: fix your split before trusting any metric below — your test set is contaminated.")
+        sys.exit(1)
 
 
     fraud_model = fraud_artifact["model"]

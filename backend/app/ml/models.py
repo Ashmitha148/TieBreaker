@@ -59,7 +59,7 @@ class ModelManager:
     
     def current_version_info(self):
         return {
-            "version": "2.0.0",
+            "version": self.model_version,
             "fraud_model_loaded": self.fraud_model is not None,
             "fp_model_loaded": self.fp_model is not None,
             "review_model_loaded": self.review_model is not None,
@@ -83,6 +83,7 @@ class ModelManager:
         self.review_features = REVIEW_FEATURES
         self.fraud_metrics = {"precision": 0.75, "recall": 0.70, "f1": 0.72, "pr_auc": 0.72}
         self.fp_metrics = {"precision": 0.72, "recall": 0.68, "f1": 0.70, "pr_auc": 0.70}
+        self.model_version = "unloaded"
         self._load_models()
         self._initialized = True
 
@@ -101,6 +102,9 @@ class ModelManager:
                     setattr(self, f"{name}_model", data["model"])
                     setattr(self, f"{name}_features", data.get("features", feats))
                     setattr(self, f"{name}_metrics", data.get("metrics", default_metrics))
+                    artifact_version = data.get("version") or f"unversioned-{int(path.stat().st_mtime)}"
+                    if name == "fraud":
+                        self.model_version = artifact_version
                 except Exception:
                     pass
 
