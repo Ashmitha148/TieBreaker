@@ -145,7 +145,7 @@ class ModelManager:
                 pass
         score = 0.0
         score += (1 - min(record.get("amount", 0) / 100000, 1.0)) * 0.20
-        score += min(record.get("customer_tenure_days", 0) / 1000, 1.0) * 0.30
+        score += (1 - min(record.get("customer_tenure_days", 0) / 1000, 1.0)) * 0.30
         score += min(record.get("customer_tx_count_30d", 0) / 50, 1.0) * 0.20
         score += (1 - record.get("customer_refund_rate", 0)) * 0.15
         score += (1 - record.get("device_change_flag", 0)) * 0.15
