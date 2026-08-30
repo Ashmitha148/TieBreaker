@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException
+﻿from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -14,6 +14,7 @@ from ..ml.models import get_model_manager
 from ..services.velocity_engine import get_velocity_engine
 from ..config import settings
 from ..auth import verify_api_key
+from ..rate_limit import limiter
 
 router = APIRouter()
 logger = logging.getLogger("tiebreaker.transactions")
@@ -73,7 +74,9 @@ def _get_velocity_from_redis(engine, customer_id: str, device_id: str = None) ->
 
 
 @router.post("/transactions")
+@limiter.limit("100/minute")
 def create_transaction(
+    request: Request,
     payload: TransactionRequest,
     db: Session = Depends(get_db),
     _api_key: str = Depends(verify_api_key),
@@ -185,117 +188,48 @@ def create_transaction(
 
 
 @router.get("/transactions/{transaction_id}")
-def get_transaction(transaction_id: str, db: Session = Depends(get_db)):
+def get_transaction(
+    transaction_id: str,
+    db: Session = Depends(get_db),
+    _api_key: str = Depends(verify_api_key),
+):
     decision = db.query(Decision).filter(Decision.transaction_id == transaction_id).first()
 
-    if decision:
-        if decision.feature_snapshot:
-            record = json.loads(decision.feature_snapshot)
-        else:
-            record = {
-                "transaction_id": transaction_id,
-                "amount": decision.amount,
-                "ltv": decision.ltv,
-                "merchant_category": decision.merchant_category or "Retail",
-                "velocity_1h": 0,
-                "velocity_24h": 0,
-                "device_change_flag": 0,
-                "geo_mismatch_flag": 0,
-                "is_cross_border": 0,
-                "hour_of_day": 12,
-                "customer_tenure_days": 365,
-                "customer_tx_count_30d": 10,
-                "customer_refund_rate": 0.0,
-                "payment_method": "upi",
-            }
+    if not decision:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Transaction {transaction_id} not found. Use POST /api/transactions to ingest real data, "
+                   f"or POST /api/demo/seed-decisions to generate demo transactions.",
+        )
 
-        fraud_prob = decision.fraud_prob
-        fp_prob = decision.fp_prob
-
-        mgr = get_model_manager()
-        drivers = mgr.get_shap_drivers(record, top_n=3)
-
-        result = calculate_action_losses(fraud_prob, fp_prob, decision.amount, decision.ltv)
-        baseline = threshold_baseline_decision(fraud_prob)
-
+    if decision.feature_snapshot:
+        record = json.loads(decision.feature_snapshot)
     else:
-        if settings.ENVIRONMENT == "production":
-            raise HTTPException(
-                status_code=404,
-                detail=f"Transaction {transaction_id} not found. Use POST /api/transactions to ingest real data.",
-            )
-
-        import random, uuid
-        MERCHANT_PROFILES = {
-            "Retail": {"avg_amount": 45000, "ltv_base": 80000},
-            "SaaS": {"avg_amount": 150000, "ltv_base": 600000},
-            "B2B": {"avg_amount": 500000, "ltv_base": 2000000},
-            "Food": {"avg_amount": 25000, "ltv_base": 40000},
-            "Travel": {"avg_amount": 350000, "ltv_base": 500000},
-            "EdTech": {"avg_amount": 120000, "ltv_base": 300000},
-        }
-        merchant_category = random.choice(list(MERCHANT_PROFILES.keys()))
-        profile = MERCHANT_PROFILES[merchant_category]
-        amount = max(1000, int(random.gauss(profile["avg_amount"], profile["avg_amount"] * 0.4)))
-        tenure = random.randint(7, 1500)
-        ltv = int(profile["ltv_base"] * (0.5 + tenure / 2000) * random.uniform(0.8, 1.5))
-
         record = {
             "transaction_id": transaction_id,
-            "amount": amount,
-            "ltv": ltv,
-            "velocity_1h": random.randint(1, 20),
-            "velocity_24h": random.randint(5, 80),
-            "device_change_flag": random.choice([0, 1]),
-            "geo_mismatch_flag": random.choice([0, 1]),
-            "is_cross_border": random.choice([0, 1]),
-            "hour_of_day": random.randint(0, 23),
-            "customer_tenure_days": tenure,
-            "customer_tx_count_30d": random.randint(1, 120),
-            "customer_refund_rate": round(random.random(), 2),
-            "merchant_category": merchant_category,
-            "payment_method": random.choice(["upi", "card", "netbanking", "wallet"]),
+            "amount": decision.amount,
+            "ltv": decision.ltv,
+            "merchant_category": decision.merchant_category or "Retail",
+            "velocity_1h": 0,
+            "velocity_24h": 0,
+            "device_change_flag": 0,
+            "geo_mismatch_flag": 0,
+            "is_cross_border": 0,
+            "hour_of_day": 12,
+            "customer_tenure_days": 365,
+            "customer_tx_count_30d": 10,
+            "customer_refund_rate": 0.0,
+            "payment_method": "upi",
         }
 
-        prediction = predict_transaction(record)
-        fraud_prob = prediction["fraud_probability"]
-        fp_prob = prediction["fp_probability"]
-        record["fraud_prob"] = fraud_prob
-        record["fp_prob"] = fp_prob
+    fraud_prob = decision.fraud_prob
+    fp_prob = decision.fp_prob
 
-        result = calculate_action_losses(fraud_prob, fp_prob, record["amount"], record["ltv"])
-        baseline = threshold_baseline_decision(fraud_prob)
+    mgr = get_model_manager()
+    drivers = mgr.get_shap_drivers(record, top_n=3)
 
-        savings = round(
-            result["losses"].get(baseline, result["losses"]["BLOCK"]) - result["losses"][result["recommended_action"]],
-            2,
-        )
-
-        try:
-            synth_meta = get_model_manager().current_version_info()
-        except AttributeError:
-            synth_meta = {"version": "unloaded"}
-
-        decision = Decision(
-            transaction_id=transaction_id,
-            fraud_prob=fraud_prob,
-            fp_prob=fp_prob,
-            amount=record["amount"],
-            ltv=record["ltv"],
-            merchant_category=record.get("merchant_category"),
-            recommended_action=result["recommended_action"],
-            baseline_action=baseline,
-            savings_vs_baseline=savings,
-            model_version=synth_meta.get("version", "unloaded"),
-            config_version="1.0",
-            is_counterintuitive=result["is_counterintuitive"],
-            feature_snapshot=json.dumps(record),
-        )
-        db.add(decision)
-        db.commit()
-        db.refresh(decision)
-
-        drivers = prediction["shap_drivers"]
+    result = calculate_action_losses(fraud_prob, fp_prob, decision.amount, decision.ltv)
+    baseline = threshold_baseline_decision(fraud_prob)
 
     override = db.query(Override).filter(Override.transaction_id == transaction_id).first()
 

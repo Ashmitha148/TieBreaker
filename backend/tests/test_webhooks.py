@@ -1,4 +1,29 @@
+import hashlib
+import hmac
+import json
+
 import pytest
+
+from tests.conftest import TEST_WEBHOOK_SECRET
+
+
+def _sign(payload: dict) -> tuple[bytes, str]:
+    body = json.dumps(payload).encode("utf-8")
+    signature = hmac.new(TEST_WEBHOOK_SECRET.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    return body, signature
+
+
+def _post_signed(client, payload: dict, event_id: str):
+    body, signature = _sign(payload)
+    return client.post(
+        "/api/webhooks/razorpay",
+        content=body,
+        headers={
+            "content-type": "application/json",
+            "x-razorpay-event-id": event_id,
+            "x-razorpay-signature": signature,
+        },
+    )
 
 
 class TestWebhookEndpoint:
@@ -9,7 +34,7 @@ class TestWebhookEndpoint:
         assert "events" in data
         assert isinstance(data["events"], list)
 
-    def test_webhook_accepted_in_test_mode(self, client):
+    def test_webhook_accepted_with_valid_signature(self, client):
         payload = {
             "event": "payment.captured",
             "payload": {
@@ -23,11 +48,7 @@ class TestWebhookEndpoint:
                 }
             }
         }
-        response = client.post(
-            "/api/webhooks/razorpay",
-            json=payload,
-            headers={"x-razorpay-event-id": "evt_test_001"},
-        )
+        response = _post_signed(client, payload, "evt_test_001")
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "received"
@@ -47,11 +68,7 @@ class TestWebhookEndpoint:
                 }
             }
         }
-        response = client.post(
-            "/api/webhooks/razorpay",
-            json=payload,
-            headers={"x-razorpay-event-id": "evt_test_002"},
-        )
+        response = _post_signed(client, payload, "evt_test_002")
         assert response.status_code == 200
         assert response.json()["status"] == "received"
 
@@ -68,10 +85,9 @@ class TestWebhookEndpoint:
                 }
             }
         }
-        headers = {"x-razorpay-event-id": "evt_test_dup"}
-        r1 = client.post("/api/webhooks/razorpay", json=payload, headers=headers)
+        r1 = _post_signed(client, payload, "evt_test_dup")
         assert r1.status_code == 200
-        r2 = client.post("/api/webhooks/razorpay", json=payload, headers=headers)
+        r2 = _post_signed(client, payload, "evt_test_dup")
         assert r2.status_code == 200
         assert r2.json()["status"] == "already_processed"
 
@@ -88,11 +104,7 @@ class TestWebhookEndpoint:
                 }
             }
         }
-        response = client.post(
-            "/api/webhooks/razorpay",
-            json=payload,
-            headers={"x-razorpay-event-id": "evt_test_004"},
-        )
+        response = _post_signed(client, payload, "evt_test_004")
         assert response.status_code == 200
 
     def test_webhook_list_has_events(self, client):
@@ -100,3 +112,46 @@ class TestWebhookEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert len(data["events"]) > 0
+
+    # --- Fail-closed security behavior ---
+
+    def test_webhook_rejects_missing_signature(self, client):
+        payload = {"event": "payment.captured", "payload": {}}
+        body = json.dumps(payload).encode("utf-8")
+        response = client.post(
+            "/api/webhooks/razorpay",
+            content=body,
+            headers={"content-type": "application/json", "x-razorpay-event-id": "evt_no_sig"},
+        )
+        assert response.status_code == 401
+
+    def test_webhook_rejects_invalid_signature(self, client):
+        payload = {"event": "payment.captured", "payload": {}}
+        body = json.dumps(payload).encode("utf-8")
+        response = client.post(
+            "/api/webhooks/razorpay",
+            content=body,
+            headers={
+                "content-type": "application/json",
+                "x-razorpay-event-id": "evt_bad_sig",
+                "x-razorpay-signature": "not_a_real_signature",
+            },
+        )
+        assert response.status_code == 401
+
+    def test_webhook_rejects_when_secret_not_configured(self, client, monkeypatch):
+        from app.config import settings
+        monkeypatch.setattr(settings, "RAZORPAY_WEBHOOK_SECRET", "")
+        monkeypatch.setattr(settings, "RAZORPAY_KEY_SECRET", "")
+        payload = {"event": "payment.captured", "payload": {}}
+        body = json.dumps(payload).encode("utf-8")
+        response = client.post(
+            "/api/webhooks/razorpay",
+            content=body,
+            headers={
+                "content-type": "application/json",
+                "x-razorpay-event-id": "evt_no_secret",
+                "x-razorpay-signature": "irrelevant",
+            },
+        )
+        assert response.status_code == 401

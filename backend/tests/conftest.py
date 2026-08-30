@@ -10,6 +10,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.database import Base, get_db
 from app.main import app
+from app.services.strike_selector import reset_queue_tracker
+from app.config import settings
 
 TEST_DATABASE_URL = "sqlite:///:memory:"
 engine = create_engine(
@@ -36,6 +38,29 @@ def setup_database():
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)
+
+
+TEST_WEBHOOK_SECRET = "test_webhook_secret_for_pytest_only"
+
+
+@pytest.fixture(autouse=True)
+def _configure_webhook_secret():
+    # Webhook signature verification fails CLOSED when no secret is
+    # configured (see app/routes/webhooks.py), so tests need a real secret
+    # to sign against rather than relying on verification being skipped.
+    original = settings.RAZORPAY_WEBHOOK_SECRET
+    settings.RAZORPAY_WEBHOOK_SECRET = TEST_WEBHOOK_SECRET
+    yield
+    settings.RAZORPAY_WEBHOOK_SECRET = original
+
+
+@pytest.fixture(autouse=True)
+def _reset_review_queue_tracker():
+    # The cost model's queue-capacity simulation keeps in-process rolling
+    # state. Reset it before every test so results don't depend on test
+    # execution order.
+    reset_queue_tracker()
+    yield
 
 
 @pytest.fixture

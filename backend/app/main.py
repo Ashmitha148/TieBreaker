@@ -4,12 +4,17 @@ from contextlib import asynccontextmanager
 import asyncio
 import logging
 
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+
 from .database import engine, Base, ensure_sqlite_decision_columns
 from .routes import orders, payments, webhooks
 from .routes import transactions, metrics, demo, queue, insights, audit, config as config_route
 from .routes import cost_config, stream, whatif, learning
 from .startup import ensure_models_trained
 from .config import settings
+from .rate_limit import limiter
 from .ml.models import get_model_manager
 from . import models as _models  # noqa: F401 — register tables on Base.metadata
 
@@ -56,9 +61,33 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
+# CORS: in production this must be exactly the deployed frontend origin.
+# Never trust a wildcard or a localhost entry in production — a
+# misconfigured env var should fail loudly rather than silently widen
+# access to the API from any origin.
+_PRODUCTION_ALLOWED_ORIGINS = ["https://tie-breaker-pi.vercel.app"]
+
+if settings.ENVIRONMENT == "production":
+    configured = list(settings.BACKEND_CORS_ORIGINS)
+    if configured != _PRODUCTION_ALLOWED_ORIGINS:
+        logger.warning(
+            "BACKEND_CORS_ORIGINS in production was %r — overriding to the "
+            "locked-down production origin %r. Wildcards and localhost are "
+            "never honored in production.",
+            configured,
+            _PRODUCTION_ALLOWED_ORIGINS,
+        )
+    cors_origins = _PRODUCTION_ALLOWED_ORIGINS
+else:
+    cors_origins = settings.BACKEND_CORS_ORIGINS
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.BACKEND_CORS_ORIGINS,
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -78,17 +107,6 @@ app.include_router(cost_config.router, prefix="/api")
 app.include_router(stream.router, prefix="/api")
 app.include_router(whatif.router, prefix="/api")
 app.include_router(learning.router, prefix="/api")
-
-@app.get("/", tags=["Health"])
-def root():
-    return {
-        "project": settings.PROJECT_NAME,
-        "phase": "Phase 2 — Risk Decisioning",
-        "status": "ready",
-        "version": "2.0.0",
-        "docs": "/docs",
-    }
-
 
 @app.get("/health", tags=["Health"])
 def health_check():

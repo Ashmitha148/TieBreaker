@@ -4,15 +4,12 @@ from typing import Optional
 import hashlib
 import hmac
 import json
-import logging
 
 from ..database import get_db
-from ..models import WebhookEvent
+from ..models import WebhookEvent, Payment, Order
 from ..config import settings
-from ..services.webhook_processor import process_webhook_event_task
 
 router = APIRouter()
-logger = logging.getLogger("tiebreaker.webhooks")
 
 
 def verify_webhook_signature(payload: bytes, signature: str, secret: str) -> bool:
@@ -20,6 +17,39 @@ def verify_webhook_signature(payload: bytes, signature: str, secret: str) -> boo
         return False
     expected = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature)
+
+
+async def process_webhook_event(event_type: str, payload: dict, db: Session):
+    try:
+        entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
+        if not entity:
+            entity = payload.get("payload", {}).get("order", {}).get("entity", {})
+        payment_id = entity.get("id", "")
+        order_id = entity.get("order_id", "")
+        status = entity.get("status", "")
+        amount = entity.get("amount", 0)
+        method = entity.get("method", "")
+        payment = db.query(Payment).filter(Payment.razorpay_payment_id == payment_id).first()
+        if payment:
+            payment.status = status
+            payment.method = method
+            payment.raw_payload = json.dumps(payload)
+        else:
+            order = db.query(Order).filter(Order.razorpay_order_id == order_id).first()
+            new_payment = Payment(
+                razorpay_payment_id=payment_id,
+                razorpay_order_id=order_id,
+                order_id=order.id if order else None,
+                amount=amount,
+                status=status,
+                method=method,
+                raw_payload=json.dumps(payload),
+            )
+            db.add(new_payment)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise e
 
 
 @router.post("/webhooks/razorpay")
@@ -31,66 +61,39 @@ async def razorpay_webhook(
     x_razorpay_signature: Optional[str] = Header(None),
 ):
     body = await request.body()
-
-    # FIXED: a raw request.json() call on an empty or malformed body used to
-    # raise an uncaught json.decoder.JSONDecodeError -> 500, instead of the
-    # 400 Razorpay delivery retries expect on a bad payload.
-    if not body:
-        raise HTTPException(status_code=400, detail="Empty webhook body")
-    try:
-        payload = json.loads(body)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Malformed JSON in webhook body")
-
+    payload = await request.json()
     event_type = payload.get("event", "unknown")
 
-    # Verify authenticity before trusting anything else in the request,
-    # including the event id used for the idempotency check below.
     secret = settings.RAZORPAY_WEBHOOK_SECRET or settings.RAZORPAY_KEY_SECRET or ""
-    if secret and len(secret) > 5:
-        if not x_razorpay_signature:
-            raise HTTPException(status_code=400, detail="Missing X-Razorpay-Signature header")
-        if not verify_webhook_signature(body, x_razorpay_signature, secret):
-            raise HTTPException(status_code=400, detail="Invalid webhook signature")
+    # Fail CLOSED: verify before touching the DB at all, and before the
+    # dedup lookup below (which would otherwise let an unauthenticated
+    # caller probe which event_ids we've already seen). A missing/empty
+    # secret or signature must reject the request, never silently accept
+    # it — previously an empty/short secret skipped verification entirely
+    # and returned 200 for anything.
+    if not secret:
+        raise HTTPException(status_code=401, detail="Webhook secret not configured")
+    if not x_razorpay_signature:
+        raise HTTPException(status_code=401, detail="Missing signature")
+    if not verify_webhook_signature(body, x_razorpay_signature, secret):
+        raise HTTPException(status_code=401, detail="Invalid signature")
 
-    # FIXED: previously always synthesized an id (md5 of the body) when the
-    # header was absent, so a delivery with no real id could never be
-    # rejected or deduplicated correctly. Now falls back to a body-level id
-    # and only then fails loudly.
-    event_id = x_razorpay_event_id or payload.get("id")
-    if not event_id:
-        raise HTTPException(
-            status_code=400,
-            detail="Missing event ID: no X-Razorpay-Event-Id header and no id in payload",
-        )
-
-    existing = db.query(WebhookEvent).filter(WebhookEvent.event_id == event_id).first()
-    if existing:
-        return {"status": "ignored", "event_id": event_id, "message": "Duplicate event ignored"}
-
-    entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
-    if not entity:
-        entity = payload.get("payload", {}).get("order", {}).get("entity", {})
+    if x_razorpay_event_id:
+        existing = db.query(WebhookEvent).filter(WebhookEvent.event_id == x_razorpay_event_id).first()
+        if existing:
+            return {"status": "already_processed", "event_id": x_razorpay_event_id}
 
     event = WebhookEvent(
-        event_id=event_id,
+        event_id=x_razorpay_event_id or f"evt_{hashlib.md5(body).hexdigest()[:12]}",
         event_type=event_type,
-        entity_id=entity.get("id", ""),
+        entity_id=payload.get("payload", {}).get("payment", {}).get("entity", {}).get("id", ""),
         status="received",
         payload=json.dumps(payload),
     )
     db.add(event)
     db.commit()
-
-    # FIXED: the background task now opens its own DB session
-    # (process_webhook_event_task does this internally via SessionLocal()).
-    # Passing the request-scoped `db` session here was a real bug: FastAPI
-    # closes it via get_db()'s `finally` block during request teardown,
-    # which happens before the background task actually runs, so writes
-    # inside it were silently lost.
-    background_tasks.add_task(process_webhook_event_task, event_id, event_type, payload)
-
-    return {"status": "accepted", "event_id": event_id}
+    background_tasks.add_task(process_webhook_event, event_type, payload, db)
+    return {"status": "received", "event_id": event.event_id}
 
 
 @router.get("/webhooks")
