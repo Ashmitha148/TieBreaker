@@ -34,7 +34,7 @@ Velocity Engine   Decision      Audit/Learning    Razorpay
     |         +------+------+-----------+
     |         |             |           |
     |    Fraud Model    FP Model    LTV Estimator
-    |    (XGBoost)     (XGBoost)   (Heuristic)
+    |    (GBClassifier) (GBClassifier) (Heuristic)
     |         |             |           |
     |         +------+------+-----------+
     |                |
@@ -87,36 +87,24 @@ class VelocityEngine:
 
 ### 3.2 Fraud Detection Model
 
-**Algorithm**: XGBoost Classifier
-**Features**: 47 engineered features
+**Algorithm**: `sklearn.ensemble.GradientBoostingClassifier`
+**Features**: 10 engineered features (`FRAUD_FEATURES` in `app/ml/models.py`):
 
-- Transaction amount + velocity stats
-- Device fingerprint entropy
-- Merchant risk score
-- Time-based features (hour, day-of-week, is_weekend)
-- Historical customer behavior (avg amount, std dev, days since last)
-- Payment method risk (UPI < Card < NetBanking)
+`amount`, `velocity_1h`, `velocity_24h`, `device_change_flag`, `geo_mismatch_flag`, `is_cross_border`, `hour_of_day`, `customer_tenure_days`, `customer_tx_count_30d`, `customer_refund_rate`
 
 **Training Data**:
-- Confirmed fraud labels from chargebacks + merchant reports
-- Synthetic SMOTE oversampling for minority class
-- Time-based train/test split (no data leakage)
+- Synthetic data generator (`app/ml/data.py`) — see [Current Limitations](#11-current-limitations)
+- Labels sampled probabilistically (Bernoulli over a noisy sigmoid score), not rule-derived, so the model can't simply memorize the generating rule
+- Time-based train/test split
 
-**Performance**:
-- Precision: 0.89
-- Recall: 0.87
-- F1: 0.88
-- AUC-ROC: 0.94
+**Performance target**: precision/recall in the 0.75–0.90 range on held-out data (`ml/evaluation.py`). Deliberately not near-perfect — see Current Limitations.
 
 ### 3.3 False Positive Model
 
-Traditional fraud models maximize fraud detection. They don't explicitly learn what a false positive looks like. The FP model is trained on:
+Traditional fraud models maximize fraud detection. They don't explicitly learn what a false positive looks like. `app/ml/data.py`'s synthetic generator biases `is_false_positive` toward the pattern such a model needs to learn: high amount + low tenure + unusual hour + not-actually-fraud, with noise. (Same synthetic-data caveat as the fraud model — see Current Limitations.)
 
-- Transactions that were blocked but later confirmed legitimate
-- High-LTV customers with unusual but valid patterns
-- Seasonal spikes (Diwali shopping, salary day)
-
-**Algorithm**: XGBoost Classifier (separate feature weights)
+**Algorithm**: `sklearn.ensemble.GradientBoostingClassifier` (separate model instance, separate feature set)
+**Features**: `amount`, `customer_tenure_days`, `customer_tx_count_30d`, `customer_refund_rate`, `device_change_flag`, `geo_mismatch_flag`
 **Output**: P(FalsePositive | transaction)
 
 ### 3.4 LTV Estimator
@@ -225,16 +213,13 @@ The system tracks accuracy/precision/recall/F1 before and after override batches
 2. Frontend calls POST /api/create-order
 3. Backend:
    - Creates Razorpay order
-   - Runs Velocity Engine (5ms)
-   - Runs Fraud Model + FP Model in parallel (15ms)
-   - LTV Estimator lookup (1ms)
-   - Strike Decision Engine (2ms)
+   - Runs Velocity Engine, Fraud Model, FP Model, LTV Estimator, Strike Decision Engine
    - Returns: {order_id, decision, explanation}
 4. Frontend shows decision + pipeline animation
 5. If REVIEW/BLOCK: Add to analyst queue
 6. If ALLOW: Proceed to Razorpay checkout
 
-**Total Latency**: ~25-35ms
+**Total latency**: see [§6 Performance](#6-performance) for measured numbers and their caveats — the per-step breakdown above is not individually instrumented, so no sub-step timings are claimed.
 
 ### Analyst Review Flow
 
@@ -312,23 +297,24 @@ CREATE TABLE review_queue (
 
 ## 6. Performance
 
-### Latency Budget
+### Latency
 
-| Component | Budget | Actual |
-|-----------|--------|--------|
-| Velocity Engine | 5ms | 2-3ms |
-| Fraud Model | 15ms | 10-12ms |
-| FP Model | 15ms | 8-10ms |
-| LTV Lookup | 2ms | 1ms |
-| Strike Engine | 5ms | 1-2ms |
-| DB Write | 5ms | 3-5ms |
-| **Total** | **50ms** | **25-35ms** |
+Measured end-to-end on `POST /api/transactions` (50 requests, in-process `TestClient`, SQLite, Redis unavailable so the velocity engine takes its zero-fallback path):
+
+| Metric | Value |
+|--------|-------|
+| Median | ~7ms |
+| p95 | ~8ms |
+
+This is a floor, not a production number: it excludes network round-trip, a real Postgres connection, and a live Redis lookup, all of which add latency in a deployed environment. It has not been measured against the deployed Vercel/production backend. Re-measure against the real deployment before quoting a latency SLA externally.
 
 ### Throughput
 
-- Single FastAPI worker: ~400 RPS
-- With 4 workers + Redis caching: ~1,500 RPS
-- Horizontal scaling: Add workers behind Nginx load balancer
+Not load-tested. The numbers below are estimates based on the measured per-request latency, not a benchmark run — treat them as a starting assumption to validate, not a capacity guarantee.
+
+- Single FastAPI worker: ~400 RPS (estimated)
+- With 4 workers + Redis caching: ~1,500 RPS (estimated)
+- Horizontal scaling: Add workers behind a load balancer
 
 ### Caching
 
@@ -340,12 +326,12 @@ CREATE TABLE review_queue (
 
 ## 7. Security
 
-- End-to-end encryption: All PII encrypted at rest (AES-256)
-- API authentication: JWT tokens with 15-min expiry
-- Rate limiting: 100 req/min per API key
-- Audit immutability: Audit logs append-only, no UPDATE/DELETE
-- Model versioning: Every decision tagged with model version
-- SOC 2 readiness: Audit trails, access controls, data retention
+- **API authentication**: static API key via `X-API-Key` header (`app/auth.py`), required on scoring and mutating endpoints. Not JWT — see Current Limitations.
+- **Rate limiting**: 100 req/min per API key on `/api/transactions`, 20 req/min on `/api/what-if` (`slowapi`, keyed by API key with IP fallback).
+- **Webhook verification**: Razorpay webhook signatures are verified fail-closed — a missing or empty `RAZORPAY_WEBHOOK_SECRET` returns 401, it does not silently accept the request.
+- **CORS**: locked to the exact production frontend origin in production; wildcard/localhost origins are rejected and overridden.
+- **Audit immutability**: Audit logs are append-only, no UPDATE/DELETE.
+- **Model versioning**: Every decision tagged with model version.
 
 ---
 
@@ -423,11 +409,23 @@ See DEPLOYMENT.md for full instructions.
 
 ## 10. Future Roadmap
 
-- Graph Neural Networks for merchant-merchant fraud rings
-- Real-time device fingerprinting with browser canvas + WebGL entropy
-- AutoML pipeline for automated model retraining
-- Multi-merchant federation — learn across merchants without data sharing
-- Voice/SMS verification integration for high-value VERIFY decisions
+Ideas under consideration, not committed or scheduled:
+
+- Automatic retraining pipeline triggered off analyst override volume (the `/api/learning/trigger-retrain` endpoint currently only reports whether retraining looks warranted — it does not retrain)
+- Alembic-based Postgres migration path for production (see Current Limitations)
+- JWT-based auth to replace the current static API key
+
+---
+
+## 11. Current Limitations
+
+This section exists so the rest of the document isn't read as a claim of production-grade completeness. Known gaps, honestly:
+
+- **Synthetic training data.** Both the fraud and false-positive models are trained on data generated by `app/ml/data.py`, not real transactions, chargebacks, or merchant reports. The generator is designed to avoid the model trivially learning its own generation rule (probabilistic labels, adversarial and false-alarm cases, feature-importance spread checks), but it is still synthetic — performance on real traffic is unvalidated.
+- **Heuristic fallbacks, not just the review-time model.** If a trained `.pkl` artifact is missing for the fraud model, FP model, or review-time model, `ModelManager` falls back to a hand-written scoring heuristic (see `app/ml/models.py`) rather than failing the request. This keeps the API up but means decisions can silently be heuristic-quality rather than model-quality; `GET /health` surfaces this via `ml.fraud_model_loaded` / `ml.fp_model_loaded`.
+- **No JWT.** API authentication is a single static API key (`X-API-Key`, `app/auth.py`), not JWT, OAuth, or per-user identity. There's no token expiry or per-user revocation.
+- **No automatic retraining.** `POST /api/learning/trigger-retrain` reports whether override volume suggests retraining is warranted; it does not retrain, deploy, or A/B test a new model. Any retraining today is a manual run of `train_models.py`.
+- **SQLite by default.** Production deployments should set `DATABASE_URL` to Postgres; SQLite remains the default and is what CI/tests run against.
 
 ---
 
