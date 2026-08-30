@@ -4,6 +4,12 @@ Cost-aware payment risk decisioning for **Razorpay Buildathon 2026, Track 2 (AI 
 
 TieBreaker scores a transaction with two models (fraud and false-positive), then picks ALLOW / VERIFY / REVIEW / BLOCK by expected rupee loss — not by a single threshold. This README describes what is actually in this repository and what the evaluation script produced on a held-out test set. It does not invent business-impact percentages.
 
+## Live Demo
+
+**Live application:** https://tie-breaker-pi.vercel.app/checkout
+
+The public demo runs the React/Vite frontend deployed on Vercel and connects to the deployed FastAPI backend.
+
 ## Held-out metrics (from `ml/evaluation.py`, this run)
 
 Leakage check: **PASS** — 4411 train IDs, 1769 test IDs, **0 overlap**.
@@ -42,7 +48,6 @@ Full JSON (including per-merchant tables and the generated limitations write-up)
 - Automatic model retraining from overrides (the learning endpoint is a recommendation report)
 - Production SHAP waterfall for every request (TreeExplainer is used when `shap` loads; otherwise heuristic drivers)
 - Graph / device-fingerprint / multi-merchant federation features described in older architecture notes
-- A live public demo URL — `https://tiebreaker-demo.vercel.app` returns 404 and is not linked here
 - Claimed XGBoost models — training code uses sklearn gradient boosting, not XGBoost, even though `xgboost` is listed in requirements
 
 ## Architecture (what this repo actually deploys)

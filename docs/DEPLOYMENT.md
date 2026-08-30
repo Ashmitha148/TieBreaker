@@ -17,7 +17,7 @@ Razorpay Buildathon 2026
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/yourusername/tiebreaker.git
+git clone https://github.com/Ashmitha148/TieBreaker.git
 cd tiebreaker
 
 # 2. Set environment variables
