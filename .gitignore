@@ -51,3 +51,5 @@ frontend/dist-ssr/
 *.swo
 .DS_Store
 Thumbs.db
+
+backend/app/ml/data/*.csv
