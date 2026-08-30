@@ -12,6 +12,7 @@ from app.database import Base, get_db
 from app.main import app
 from app.services.strike_selector import reset_queue_tracker
 from app.config import settings
+from app.models import Decision
 
 TEST_DATABASE_URL = "sqlite:///:memory:"
 engine = create_engine(
@@ -33,9 +34,36 @@ def override_get_db():
 app.dependency_overrides[get_db] = override_get_db
 
 
+# Fixed transaction_ids referenced directly by name in test_override.py,
+# test_decisions.py, and test_api.py. Previously these resolved via a
+# random-data-on-404 fallback in the GET endpoint; that fallback was removed
+# as a security fix (ticket item 3), so the tests now need real rows.
+SEEDED_TRANSACTION_IDS = ["TXN-TEST-001", "TXN-TEST-003", "TXN-TEST-004", "TXN-COUNTER-001"]
+
+
 @pytest.fixture(scope="session", autouse=True)
 def setup_database():
     Base.metadata.create_all(bind=engine)
+    session = TestingSessionLocal()
+    try:
+        for txn_id in SEEDED_TRANSACTION_IDS:
+            session.add(Decision(
+                transaction_id=txn_id,
+                fraud_prob=0.62,
+                fp_prob=0.18,
+                amount=180000,
+                ltv=450000,
+                merchant_category="Retail",
+                recommended_action="REVIEW",
+                baseline_action="REVIEW",
+                savings_vs_baseline=0.0,
+                model_version="test",
+                config_version="test",
+                is_counterintuitive=False,
+            ))
+        session.commit()
+    finally:
+        session.close()
     yield
     Base.metadata.drop_all(bind=engine)
 

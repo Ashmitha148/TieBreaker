@@ -10,7 +10,7 @@ class TestStrikeSelector:
             amount=50000,
             ltv=100000,
         )
-        assert result["recommended_action"] == "REVIEW"  # CHANGED FROM "ALLOW"
+        assert result["recommended_action"] == "ALLOW"
         assert "losses" in result
         assert all(k in result["losses"] for k in ["ALLOW", "VERIFY", "REVIEW", "BLOCK"])
 
@@ -24,14 +24,18 @@ class TestStrikeSelector:
         assert result["is_counterintuitive"] is True
         assert result["recommended_action"] != "BLOCK"
 
-    def test_high_fraud_mandatory_review(self):
+    def test_high_fraud_low_ltv_blocks(self):
+        # The hardcoded "fraud_prob > 0.90 => REVIEW" override was removed
+        # (ticket item 2): the cost model must decide on its own. With low
+        # LTV there's little customer-relationship value to protect, so
+        # BLOCK — not REVIEW — is the cost-optimal action here.
         result = calculate_action_losses(
             fraud_prob=0.95,
             fp_prob=0.05,
             amount=100000,
             ltv=50000,
         )
-        assert result["recommended_action"] == "REVIEW"
+        assert result["recommended_action"] == "BLOCK"
 
     def test_threshold_baseline_decision(self):
         assert threshold_baseline_decision(0.05) == "ALLOW"

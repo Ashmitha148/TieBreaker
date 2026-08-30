@@ -6,13 +6,14 @@ Useful for: judge demos, analyst training, merchant onboarding.
 
 import logging
 import uuid
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from typing import Optional
 
 from ..services.strike_selector import calculate_action_losses, threshold_baseline_decision
 from ..ml.predictor import predict_transaction
 from ..auth import verify_api_key
+from ..rate_limit import limiter
 
 router = APIRouter()
 logger = logging.getLogger("tiebreaker.whatif")
@@ -39,7 +40,8 @@ class WhatIfRequest(BaseModel):
 
 
 @router.post("/what-if")
-def what_if_simulator(payload: WhatIfRequest, _api_key: str = Depends(verify_api_key)):
+@limiter.limit("20/minute")
+def what_if_simulator(request: Request, payload: WhatIfRequest, _api_key: str = Depends(verify_api_key)):
     """
     Simulate a TieBreaker decision with custom parameters.
     Returns: recommended action, baseline action, losses for all 4 actions, and savings.
