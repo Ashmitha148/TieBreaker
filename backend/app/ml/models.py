@@ -1,7 +1,10 @@
-﻿import os
+﻿import logging
+import os
 import pickle
 import random
 from pathlib import Path
+
+logger = logging.getLogger("tiebreaker.ml")
 
 try:
     from sklearn.ensemble import GradientBoostingClassifier
@@ -105,8 +108,8 @@ class ModelManager:
                     artifact_version = data.get("version") or f"unversioned-{int(path.stat().st_mtime)}"
                     if name == "fraud":
                         self.model_version = artifact_version
-                except Exception:
-                    pass
+                except (FileNotFoundError, pickle.UnpicklingError, EOFError, KeyError) as e:
+                    logger.warning(f"Could not load {name} model artifact from {path}: {e}")
 
         review_path = ARTIFACTS_DIR / "review_model.pkl"
         if review_path.exists():
@@ -115,8 +118,8 @@ class ModelManager:
                     data = pickle.load(f)
                 self.review_model = data["model"]
                 self.review_features = data.get("features", REVIEW_FEATURES)
-            except Exception:
-                pass
+            except (FileNotFoundError, pickle.UnpicklingError, EOFError, KeyError) as e:
+                logger.warning(f"Could not load review model artifact from {review_path}: {e}")
 
     def predict_fraud_prob(self, record: dict) -> float:
         if self.fraud_model is not None and SKLEARN_AVAILABLE:
@@ -124,8 +127,8 @@ class ModelManager:
                 X = [_extract_features(record, self.fraud_features)]
                 proba = self.fraud_model.predict_proba(X)[0][1]
                 return round(float(proba), 4)
-            except Exception:
-                pass
+            except (ValueError, KeyError, IndexError) as e:
+                logger.warning(f"Fraud model inference failed, using heuristic fallback: {e}")
         score = 0.0
         score += min(record.get("amount", 0) / 200000, 1.0) * 0.25
         score += min(record.get("velocity_1h", 0) / 15, 1.0) * 0.20
@@ -141,8 +144,8 @@ class ModelManager:
                 X = [_extract_features(record, self.fp_features)]
                 proba = self.fp_model.predict_proba(X)[0][1]
                 return round(float(proba), 4)
-            except Exception:
-                pass
+            except (ValueError, KeyError, IndexError) as e:
+                logger.warning(f"FP model inference failed, using heuristic fallback: {e}")
         score = 0.0
         score += (1 - min(record.get("amount", 0) / 100000, 1.0)) * 0.20
         score += (1 - min(record.get("customer_tenure_days", 0) / 1000, 1.0)) * 0.30
@@ -157,8 +160,8 @@ class ModelManager:
                 X = [_extract_features(record, self.review_features)]
                 pred = self.review_model.predict(X)[0]
                 return round(float(max(pred, 1.0)), 2)
-            except Exception:
-                pass
+            except (ValueError, KeyError, IndexError) as e:
+                logger.warning(f"Review-time model inference failed, using heuristic fallback: {e}")
         base = 2.0
         base += record.get("is_fraud", 0) * 3.5
         base += min(record.get("amount", 0) / 100000, 1.0) * 2.0
@@ -201,7 +204,8 @@ class ModelManager:
                 })
             feature_impacts.sort(key=lambda x: abs(x["raw_value"]), reverse=True)
             return feature_impacts[:top_n]
-        except Exception:
+        except (ValueError, KeyError, IndexError, AttributeError, TypeError) as e:
+            logger.warning(f"SHAP explanation failed, using static fallback drivers: {e}")
             return [
                 {"feature": "amount", "impact": 0.15, "direction": "increases"},
                 {"feature": "geo_mismatch", "impact": 0.12, "direction": "increases"},

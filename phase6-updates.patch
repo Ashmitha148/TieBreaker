@@ -1,0 +1,627 @@
+diff --git a/backend/alembic/versions/0001_initial_schema.py b/backend/alembic/versions/0001_initial_schema.py
+new file mode 100644
+index 0000000..1b392fc
+--- /dev/null
++++ b/backend/alembic/versions/0001_initial_schema.py
+@@ -0,0 +1,146 @@
++"""initial schema — create all tables
++
++Revision ID: 0001_initial_schema
++Revises:
++Create Date: 2026-08-31 00:00:00.000000
++"""
++from typing import Sequence, Union
++
++from alembic import op
++import sqlalchemy as sa
++
++revision: str = "0001_initial_schema"
++down_revision: Union[str, Sequence[str], None] = None
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    op.create_table(
++        "orders",
++        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
++        sa.Column("razorpay_order_id", sa.String(100), nullable=False),
++        sa.Column("amount", sa.Integer(), nullable=False),
++        sa.Column("currency", sa.String(10), server_default="INR", nullable=False),
++        sa.Column("status", sa.String(50), server_default="created", nullable=False),
++        sa.Column("receipt", sa.String(100), nullable=True),
++        sa.Column("notes", sa.Text(), nullable=True),
++        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
++        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
++    )
++    op.create_index("ix_orders_id", "orders", ["id"])
++    op.create_index("ix_orders_razorpay_order_id", "orders", ["razorpay_order_id"], unique=True)
++
++    op.create_table(
++        "payments",
++        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
++        sa.Column("razorpay_payment_id", sa.String(100), nullable=False),
++        sa.Column("razorpay_order_id", sa.String(100), nullable=True),
++        sa.Column("order_id", sa.Integer(), sa.ForeignKey("orders.id"), nullable=True),
++        sa.Column("amount", sa.Integer(), nullable=False),
++        sa.Column("currency", sa.String(10), server_default="INR", nullable=False),
++        sa.Column("status", sa.String(50), nullable=False),
++        sa.Column("method", sa.String(50), nullable=True),
++        sa.Column("bank", sa.String(50), nullable=True),
++        sa.Column("wallet", sa.String(50), nullable=True),
++        sa.Column("vpa", sa.String(100), nullable=True),
++        sa.Column("email", sa.String(255), nullable=True),
++        sa.Column("contact", sa.String(50), nullable=True),
++        sa.Column("error_code", sa.String(100), nullable=True),
++        sa.Column("error_description", sa.Text(), nullable=True),
++        sa.Column("error_source", sa.String(100), nullable=True),
++        sa.Column("error_step", sa.String(100), nullable=True),
++        sa.Column("error_reason", sa.String(100), nullable=True),
++        sa.Column("raw_payload", sa.Text(), nullable=True),
++        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
++        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
++    )
++    op.create_index("ix_payments_id", "payments", ["id"])
++    op.create_index("ix_payments_razorpay_payment_id", "payments", ["razorpay_payment_id"], unique=True)
++    op.create_index("ix_payments_razorpay_order_id", "payments", ["razorpay_order_id"])
++
++    op.create_table(
++        "webhook_events",
++        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
++        sa.Column("event_id", sa.String(100), nullable=False),
++        sa.Column("event_type", sa.String(100), nullable=False),
++        sa.Column("entity_id", sa.String(100), nullable=True),
++        sa.Column("status", sa.String(50), server_default="received", nullable=False),
++        sa.Column("payload", sa.Text(), nullable=True),
++        sa.Column("error_message", sa.Text(), nullable=True),
++        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
++        sa.Column("processed_at", sa.DateTime(timezone=True), nullable=True),
++    )
++    op.create_index("ix_webhook_events_id", "webhook_events", ["id"])
++    op.create_index("ix_webhook_events_event_id", "webhook_events", ["event_id"], unique=True)
++    op.create_index("ix_webhook_events_event_type", "webhook_events", ["event_type"])
++
++    op.create_table(
++        "decisions",
++        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
++        sa.Column("transaction_id", sa.String(100), nullable=False),
++        sa.Column("fraud_prob", sa.Float(), nullable=False),
++        sa.Column("fp_prob", sa.Float(), nullable=False),
++        sa.Column("amount", sa.Float(), nullable=False),
++        sa.Column("ltv", sa.Float(), nullable=False),
++        sa.Column("merchant_category", sa.String(50), nullable=True),
++        sa.Column("recommended_action", sa.String(20), nullable=False),
++        sa.Column("baseline_action", sa.String(20), nullable=False),
++        sa.Column("savings_vs_baseline", sa.Float(), nullable=False),
++        sa.Column("model_version", sa.String(64), server_default="1.0", nullable=False),
++        sa.Column("config_version", sa.String(20), server_default="1.0", nullable=False),
++        sa.Column("is_counterintuitive", sa.Boolean(), server_default=sa.false()),
++        sa.Column("feature_snapshot", sa.Text(), nullable=True),
++        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
++    )
++    op.create_index("ix_decisions_id", "decisions", ["id"])
++    op.create_index("ix_decisions_transaction_id", "decisions", ["transaction_id"])
++    op.create_index("ix_decisions_merchant_category", "decisions", ["merchant_category"])
++
++    op.create_table(
++        "overrides",
++        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
++        sa.Column("decision_id", sa.Integer(), sa.ForeignKey("decisions.id"), nullable=False),
++        sa.Column("transaction_id", sa.String(100), nullable=False),
++        sa.Column("original_action", sa.String(20), nullable=False),
++        sa.Column("overridden_action", sa.String(20), nullable=False),
++        sa.Column("reason", sa.Text(), nullable=False),
++        sa.Column("analyst_id", sa.String(50), nullable=False),
++        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
++    )
++    op.create_index("ix_overrides_id", "overrides", ["id"])
++    op.create_index("ix_overrides_transaction_id", "overrides", ["transaction_id"])
++
++    op.create_table(
++        "config_history",
++        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
++        sa.Column("config_snapshot", sa.Text(), nullable=False),
++        sa.Column("version", sa.String(20), nullable=False),
++        sa.Column("changed_by", sa.String(50), server_default="system", nullable=False),
++        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
++    )
++    op.create_index("ix_config_history_id", "config_history", ["id"])
++
++    op.create_table(
++        "audit_log",
++        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
++        sa.Column("timestamp", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
++        sa.Column("user", sa.String(100), nullable=False),
++        sa.Column("action", sa.String(50), nullable=False),
++        sa.Column("entity_type", sa.String(50), nullable=False),
++        sa.Column("entity_id", sa.String(100), nullable=False),
++        sa.Column("details", sa.Text(), nullable=True),
++        sa.Column("model_version", sa.String(64), nullable=True),
++        sa.Column("config_version", sa.String(20), nullable=True),
++    )
++    op.create_index("ix_audit_log_id", "audit_log", ["id"])
++
++
++def downgrade() -> None:
++    op.drop_table("audit_log")
++    op.drop_table("config_history")
++    op.drop_table("overrides")
++    op.drop_table("decisions")
++    op.drop_table("webhook_events")
++    op.drop_table("payments")
++    op.drop_table("orders")
+diff --git a/backend/alembic/versions/1b6c3f0d2105_add_feature_snapshot.py b/backend/alembic/versions/1b6c3f0d2105_add_feature_snapshot.py
+deleted file mode 100644
+index 8d158f5..0000000
+--- a/backend/alembic/versions/1b6c3f0d2105_add_feature_snapshot.py
++++ /dev/null
+@@ -1,162 +0,0 @@
+-"""add feature_snapshot
+-
+-Revision ID: 1b6c3f0d2105
+-Revises: 
+-Create Date: 2026-08-29 05:48:59.089693
+-
+-"""
+-from typing import Sequence, Union
+-
+-from alembic import op
+-import sqlalchemy as sa
+-
+-
+-# revision identifiers, used by Alembic.
+-revision: str = '1b6c3f0d2105'
+-down_revision: Union[str, Sequence[str], None] = None
+-branch_labels: Union[str, Sequence[str], None] = None
+-depends_on: Union[str, Sequence[str], None] = None
+-
+-
+-def upgrade() -> None:
+-    """Upgrade schema."""
+-    # ### commands auto generated by Alembic - please adjust! ###
+-    op.drop_index(op.f('ix_overrides_id'), table_name='overrides')
+-    op.drop_index(op.f('ix_overrides_transaction_id'), table_name='overrides')
+-    op.drop_table('overrides')
+-    op.drop_index(op.f('ix_audit_log_id'), table_name='audit_log')
+-    op.drop_table('audit_log')
+-    op.drop_index(op.f('ix_decisions_id'), table_name='decisions')
+-    op.drop_index(op.f('ix_decisions_transaction_id'), table_name='decisions')
+-    op.drop_table('decisions')
+-    op.drop_index(op.f('ix_config_history_id'), table_name='config_history')
+-    op.drop_table('config_history')
+-    op.drop_index(op.f('ix_payments_id'), table_name='payments')
+-    op.drop_index(op.f('ix_payments_razorpay_order_id'), table_name='payments')
+-    op.drop_index(op.f('ix_payments_razorpay_payment_id'), table_name='payments')
+-    op.drop_table('payments')
+-    op.drop_index(op.f('ix_orders_id'), table_name='orders')
+-    op.drop_index(op.f('ix_orders_razorpay_order_id'), table_name='orders')
+-    op.drop_table('orders')
+-    op.drop_index(op.f('ix_webhook_events_event_id'), table_name='webhook_events')
+-    op.drop_index(op.f('ix_webhook_events_event_type'), table_name='webhook_events')
+-    op.drop_index(op.f('ix_webhook_events_id'), table_name='webhook_events')
+-    op.drop_table('webhook_events')
+-    # ### end Alembic commands ###
+-
+-
+-def downgrade() -> None:
+-    """Downgrade schema."""
+-    # ### commands auto generated by Alembic - please adjust! ###
+-    op.create_table('webhook_events',
+-    sa.Column('id', sa.INTEGER(), nullable=False),
+-    sa.Column('event_id', sa.VARCHAR(length=100), nullable=False),
+-    sa.Column('event_type', sa.VARCHAR(length=100), nullable=False),
+-    sa.Column('entity_id', sa.VARCHAR(length=100), nullable=True),
+-    sa.Column('status', sa.VARCHAR(length=50), nullable=False),
+-    sa.Column('payload', sa.TEXT(), nullable=True),
+-    sa.Column('error_message', sa.TEXT(), nullable=True),
+-    sa.Column('created_at', sa.DATETIME(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+-    sa.Column('processed_at', sa.DATETIME(), nullable=True),
+-    sa.PrimaryKeyConstraint('id')
+-    )
+-    op.create_index(op.f('ix_webhook_events_id'), 'webhook_events', ['id'], unique=False)
+-    op.create_index(op.f('ix_webhook_events_event_type'), 'webhook_events', ['event_type'], unique=False)
+-    op.create_index(op.f('ix_webhook_events_event_id'), 'webhook_events', ['event_id'], unique=1)
+-    op.create_table('orders',
+-    sa.Column('id', sa.INTEGER(), nullable=False),
+-    sa.Column('razorpay_order_id', sa.VARCHAR(length=100), nullable=False),
+-    sa.Column('amount', sa.INTEGER(), nullable=False),
+-    sa.Column('currency', sa.VARCHAR(length=10), nullable=False),
+-    sa.Column('status', sa.VARCHAR(length=50), nullable=False),
+-    sa.Column('receipt', sa.VARCHAR(length=100), nullable=True),
+-    sa.Column('notes', sa.TEXT(), nullable=True),
+-    sa.Column('created_at', sa.DATETIME(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+-    sa.Column('updated_at', sa.DATETIME(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+-    sa.PrimaryKeyConstraint('id')
+-    )
+-    op.create_index(op.f('ix_orders_razorpay_order_id'), 'orders', ['razorpay_order_id'], unique=1)
+-    op.create_index(op.f('ix_orders_id'), 'orders', ['id'], unique=False)
+-    op.create_table('payments',
+-    sa.Column('id', sa.INTEGER(), nullable=False),
+-    sa.Column('razorpay_payment_id', sa.VARCHAR(length=100), nullable=False),
+-    sa.Column('razorpay_order_id', sa.VARCHAR(length=100), nullable=True),
+-    sa.Column('order_id', sa.INTEGER(), nullable=True),
+-    sa.Column('amount', sa.INTEGER(), nullable=False),
+-    sa.Column('currency', sa.VARCHAR(length=10), nullable=False),
+-    sa.Column('status', sa.VARCHAR(length=50), nullable=False),
+-    sa.Column('method', sa.VARCHAR(length=50), nullable=True),
+-    sa.Column('bank', sa.VARCHAR(length=50), nullable=True),
+-    sa.Column('wallet', sa.VARCHAR(length=50), nullable=True),
+-    sa.Column('vpa', sa.VARCHAR(length=100), nullable=True),
+-    sa.Column('email', sa.VARCHAR(length=255), nullable=True),
+-    sa.Column('contact', sa.VARCHAR(length=50), nullable=True),
+-    sa.Column('error_code', sa.VARCHAR(length=100), nullable=True),
+-    sa.Column('error_description', sa.TEXT(), nullable=True),
+-    sa.Column('error_source', sa.VARCHAR(length=100), nullable=True),
+-    sa.Column('error_step', sa.VARCHAR(length=100), nullable=True),
+-    sa.Column('error_reason', sa.VARCHAR(length=100), nullable=True),
+-    sa.Column('raw_payload', sa.TEXT(), nullable=True),
+-    sa.Column('created_at', sa.DATETIME(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+-    sa.Column('updated_at', sa.DATETIME(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+-    sa.ForeignKeyConstraint(['order_id'], ['orders.id'], ),
+-    sa.PrimaryKeyConstraint('id')
+-    )
+-    op.create_index(op.f('ix_payments_razorpay_payment_id'), 'payments', ['razorpay_payment_id'], unique=1)
+-    op.create_index(op.f('ix_payments_razorpay_order_id'), 'payments', ['razorpay_order_id'], unique=False)
+-    op.create_index(op.f('ix_payments_id'), 'payments', ['id'], unique=False)
+-    op.create_table('config_history',
+-    sa.Column('id', sa.INTEGER(), nullable=False),
+-    sa.Column('config_snapshot', sa.TEXT(), nullable=False),
+-    sa.Column('version', sa.VARCHAR(length=20), nullable=False),
+-    sa.Column('changed_by', sa.VARCHAR(length=50), nullable=False),
+-    sa.Column('created_at', sa.DATETIME(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+-    sa.PrimaryKeyConstraint('id')
+-    )
+-    op.create_index(op.f('ix_config_history_id'), 'config_history', ['id'], unique=False)
+-    op.create_table('decisions',
+-    sa.Column('id', sa.INTEGER(), nullable=False),
+-    sa.Column('transaction_id', sa.VARCHAR(length=100), nullable=False),
+-    sa.Column('fraud_prob', sa.FLOAT(), nullable=False),
+-    sa.Column('fp_prob', sa.FLOAT(), nullable=False),
+-    sa.Column('amount', sa.FLOAT(), nullable=False),
+-    sa.Column('ltv', sa.FLOAT(), nullable=False),
+-    sa.Column('recommended_action', sa.VARCHAR(length=20), nullable=False),
+-    sa.Column('baseline_action', sa.VARCHAR(length=20), nullable=False),
+-    sa.Column('savings_vs_baseline', sa.FLOAT(), nullable=False),
+-    sa.Column('model_version', sa.VARCHAR(length=20), nullable=False),
+-    sa.Column('config_version', sa.VARCHAR(length=20), nullable=False),
+-    sa.Column('is_counterintuitive', sa.BOOLEAN(), nullable=True),
+-    sa.Column('created_at', sa.DATETIME(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+-    sa.PrimaryKeyConstraint('id')
+-    )
+-    op.create_index(op.f('ix_decisions_transaction_id'), 'decisions', ['transaction_id'], unique=False)
+-    op.create_index(op.f('ix_decisions_id'), 'decisions', ['id'], unique=False)
+-    op.create_table('audit_log',
+-    sa.Column('id', sa.INTEGER(), nullable=False),
+-    sa.Column('timestamp', sa.DATETIME(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+-    sa.Column('user', sa.VARCHAR(length=100), nullable=False),
+-    sa.Column('action', sa.VARCHAR(length=50), nullable=False),
+-    sa.Column('entity_type', sa.VARCHAR(length=50), nullable=False),
+-    sa.Column('entity_id', sa.VARCHAR(length=100), nullable=False),
+-    sa.Column('details', sa.TEXT(), nullable=True),
+-    sa.Column('model_version', sa.VARCHAR(length=20), nullable=True),
+-    sa.Column('config_version', sa.VARCHAR(length=20), nullable=True),
+-    sa.PrimaryKeyConstraint('id')
+-    )
+-    op.create_index(op.f('ix_audit_log_id'), 'audit_log', ['id'], unique=False)
+-    op.create_table('overrides',
+-    sa.Column('id', sa.INTEGER(), nullable=False),
+-    sa.Column('decision_id', sa.INTEGER(), nullable=False),
+-    sa.Column('transaction_id', sa.VARCHAR(length=100), nullable=False),
+-    sa.Column('original_action', sa.VARCHAR(length=20), nullable=False),
+-    sa.Column('overridden_action', sa.VARCHAR(length=20), nullable=False),
+-    sa.Column('reason', sa.TEXT(), nullable=False),
+-    sa.Column('analyst_id', sa.VARCHAR(length=50), nullable=False),
+-    sa.Column('created_at', sa.DATETIME(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+-    sa.ForeignKeyConstraint(['decision_id'], ['decisions.id'], ),
+-    sa.PrimaryKeyConstraint('id')
+-    )
+-    op.create_index(op.f('ix_overrides_transaction_id'), 'overrides', ['transaction_id'], unique=False)
+-    op.create_index(op.f('ix_overrides_id'), 'overrides', ['id'], unique=False)
+-    # ### end Alembic commands ###
+diff --git a/backend/alembic/versions/b8814f73ec84_add_feature_snapshot.py b/backend/alembic/versions/b8814f73ec84_add_feature_snapshot.py
+deleted file mode 100644
+index b1f3617..0000000
+--- a/backend/alembic/versions/b8814f73ec84_add_feature_snapshot.py
++++ /dev/null
+@@ -1,166 +0,0 @@
+-"""add feature_snapshot
+-
+-Revision ID: b8814f73ec84
+-Revises: 1b6c3f0d2105
+-Create Date: 2026-08-29 05:52:56.466792
+-
+-"""
+-from typing import Sequence, Union
+-
+-from alembic import op
+-import sqlalchemy as sa
+-
+-
+-# revision identifiers, used by Alembic.
+-revision: str = 'b8814f73ec84'
+-down_revision: Union[str, Sequence[str], None] = '1b6c3f0d2105'
+-branch_labels: Union[str, Sequence[str], None] = None
+-depends_on: Union[str, Sequence[str], None] = None
+-
+-
+-def upgrade() -> None:
+-    """Upgrade schema."""
+-    # ### commands auto generated by Alembic - please adjust! ###
+-    op.drop_index(op.f('ix_config_history_id'), table_name='config_history')
+-    op.drop_table('config_history')
+-    op.drop_index(op.f('ix_audit_log_id'), table_name='audit_log')
+-    op.drop_table('audit_log')
+-    op.drop_index(op.f('ix_decisions_id'), table_name='decisions')
+-    op.drop_index(op.f('ix_decisions_merchant_category'), table_name='decisions')
+-    op.drop_index(op.f('ix_decisions_transaction_id'), table_name='decisions')
+-    op.drop_table('decisions')
+-    op.drop_index(op.f('ix_payments_id'), table_name='payments')
+-    op.drop_index(op.f('ix_payments_razorpay_order_id'), table_name='payments')
+-    op.drop_index(op.f('ix_payments_razorpay_payment_id'), table_name='payments')
+-    op.drop_table('payments')
+-    op.drop_index(op.f('ix_orders_id'), table_name='orders')
+-    op.drop_index(op.f('ix_orders_razorpay_order_id'), table_name='orders')
+-    op.drop_table('orders')
+-    op.drop_index(op.f('ix_overrides_id'), table_name='overrides')
+-    op.drop_index(op.f('ix_overrides_transaction_id'), table_name='overrides')
+-    op.drop_table('overrides')
+-    op.drop_index(op.f('ix_webhook_events_event_id'), table_name='webhook_events')
+-    op.drop_index(op.f('ix_webhook_events_event_type'), table_name='webhook_events')
+-    op.drop_index(op.f('ix_webhook_events_id'), table_name='webhook_events')
+-    op.drop_table('webhook_events')
+-    # ### end Alembic commands ###
+-
+-
+-def downgrade() -> None:
+-    """Downgrade schema."""
+-    # ### commands auto generated by Alembic - please adjust! ###
+-    op.create_table('webhook_events',
+-    sa.Column('id', sa.INTEGER(), nullable=False),
+-    sa.Column('event_id', sa.VARCHAR(length=100), nullable=False),
+-    sa.Column('event_type', sa.VARCHAR(length=100), nullable=False),
+-    sa.Column('entity_id', sa.VARCHAR(length=100), nullable=True),
+-    sa.Column('status', sa.VARCHAR(length=50), nullable=False),
+-    sa.Column('payload', sa.TEXT(), nullable=True),
+-    sa.Column('error_message', sa.TEXT(), nullable=True),
+-    sa.Column('created_at', sa.DATETIME(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+-    sa.Column('processed_at', sa.DATETIME(), nullable=True),
+-    sa.PrimaryKeyConstraint('id')
+-    )
+-    op.create_index(op.f('ix_webhook_events_id'), 'webhook_events', ['id'], unique=False)
+-    op.create_index(op.f('ix_webhook_events_event_type'), 'webhook_events', ['event_type'], unique=False)
+-    op.create_index(op.f('ix_webhook_events_event_id'), 'webhook_events', ['event_id'], unique=1)
+-    op.create_table('overrides',
+-    sa.Column('id', sa.INTEGER(), nullable=False),
+-    sa.Column('decision_id', sa.INTEGER(), nullable=False),
+-    sa.Column('transaction_id', sa.VARCHAR(length=100), nullable=False),
+-    sa.Column('original_action', sa.VARCHAR(length=20), nullable=False),
+-    sa.Column('overridden_action', sa.VARCHAR(length=20), nullable=False),
+-    sa.Column('reason', sa.TEXT(), nullable=False),
+-    sa.Column('analyst_id', sa.VARCHAR(length=50), nullable=False),
+-    sa.Column('created_at', sa.DATETIME(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+-    sa.ForeignKeyConstraint(['decision_id'], ['decisions.id'], ),
+-    sa.PrimaryKeyConstraint('id')
+-    )
+-    op.create_index(op.f('ix_overrides_transaction_id'), 'overrides', ['transaction_id'], unique=False)
+-    op.create_index(op.f('ix_overrides_id'), 'overrides', ['id'], unique=False)
+-    op.create_table('orders',
+-    sa.Column('id', sa.INTEGER(), nullable=False),
+-    sa.Column('razorpay_order_id', sa.VARCHAR(length=100), nullable=False),
+-    sa.Column('amount', sa.INTEGER(), nullable=False),
+-    sa.Column('currency', sa.VARCHAR(length=10), nullable=False),
+-    sa.Column('status', sa.VARCHAR(length=50), nullable=False),
+-    sa.Column('receipt', sa.VARCHAR(length=100), nullable=True),
+-    sa.Column('notes', sa.TEXT(), nullable=True),
+-    sa.Column('created_at', sa.DATETIME(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+-    sa.Column('updated_at', sa.DATETIME(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+-    sa.PrimaryKeyConstraint('id')
+-    )
+-    op.create_index(op.f('ix_orders_razorpay_order_id'), 'orders', ['razorpay_order_id'], unique=1)
+-    op.create_index(op.f('ix_orders_id'), 'orders', ['id'], unique=False)
+-    op.create_table('payments',
+-    sa.Column('id', sa.INTEGER(), nullable=False),
+-    sa.Column('razorpay_payment_id', sa.VARCHAR(length=100), nullable=False),
+-    sa.Column('razorpay_order_id', sa.VARCHAR(length=100), nullable=True),
+-    sa.Column('order_id', sa.INTEGER(), nullable=True),
+-    sa.Column('amount', sa.INTEGER(), nullable=False),
+-    sa.Column('currency', sa.VARCHAR(length=10), nullable=False),
+-    sa.Column('status', sa.VARCHAR(length=50), nullable=False),
+-    sa.Column('method', sa.VARCHAR(length=50), nullable=True),
+-    sa.Column('bank', sa.VARCHAR(length=50), nullable=True),
+-    sa.Column('wallet', sa.VARCHAR(length=50), nullable=True),
+-    sa.Column('vpa', sa.VARCHAR(length=100), nullable=True),
+-    sa.Column('email', sa.VARCHAR(length=255), nullable=True),
+-    sa.Column('contact', sa.VARCHAR(length=50), nullable=True),
+-    sa.Column('error_code', sa.VARCHAR(length=100), nullable=True),
+-    sa.Column('error_description', sa.TEXT(), nullable=True),
+-    sa.Column('error_source', sa.VARCHAR(length=100), nullable=True),
+-    sa.Column('error_step', sa.VARCHAR(length=100), nullable=True),
+-    sa.Column('error_reason', sa.VARCHAR(length=100), nullable=True),
+-    sa.Column('raw_payload', sa.TEXT(), nullable=True),
+-    sa.Column('created_at', sa.DATETIME(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+-    sa.Column('updated_at', sa.DATETIME(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+-    sa.ForeignKeyConstraint(['order_id'], ['orders.id'], ),
+-    sa.PrimaryKeyConstraint('id')
+-    )
+-    op.create_index(op.f('ix_payments_razorpay_payment_id'), 'payments', ['razorpay_payment_id'], unique=1)
+-    op.create_index(op.f('ix_payments_razorpay_order_id'), 'payments', ['razorpay_order_id'], unique=False)
+-    op.create_index(op.f('ix_payments_id'), 'payments', ['id'], unique=False)
+-    op.create_table('decisions',
+-    sa.Column('is_counterintuitive', sa.BOOLEAN(), nullable=True),
+-    sa.Column('feature_snapshot', sa.TEXT(), nullable=True),
+-    sa.Column('created_at', sa.DATETIME(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+-    sa.Column('id', sa.INTEGER(), nullable=False),
+-    sa.Column('transaction_id', sa.VARCHAR(length=100), nullable=False),
+-    sa.Column('fraud_prob', sa.FLOAT(), nullable=False),
+-    sa.Column('fp_prob', sa.FLOAT(), nullable=False),
+-    sa.Column('amount', sa.FLOAT(), nullable=False),
+-    sa.Column('ltv', sa.FLOAT(), nullable=False),
+-    sa.Column('merchant_category', sa.VARCHAR(length=50), nullable=True),
+-    sa.Column('recommended_action', sa.VARCHAR(length=20), nullable=False),
+-    sa.Column('baseline_action', sa.VARCHAR(length=20), nullable=False),
+-    sa.Column('savings_vs_baseline', sa.FLOAT(), nullable=False),
+-    sa.Column('model_version', sa.VARCHAR(length=20), nullable=False),
+-    sa.Column('config_version', sa.VARCHAR(length=20), nullable=False),
+-    sa.PrimaryKeyConstraint('id')
+-    )
+-    op.create_index(op.f('ix_decisions_transaction_id'), 'decisions', ['transaction_id'], unique=False)
+-    op.create_index(op.f('ix_decisions_merchant_category'), 'decisions', ['merchant_category'], unique=False)
+-    op.create_index(op.f('ix_decisions_id'), 'decisions', ['id'], unique=False)
+-    op.create_table('audit_log',
+-    sa.Column('id', sa.INTEGER(), nullable=False),
+-    sa.Column('timestamp', sa.DATETIME(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+-    sa.Column('user', sa.VARCHAR(length=100), nullable=False),
+-    sa.Column('action', sa.VARCHAR(length=50), nullable=False),
+-    sa.Column('entity_type', sa.VARCHAR(length=50), nullable=False),
+-    sa.Column('entity_id', sa.VARCHAR(length=100), nullable=False),
+-    sa.Column('details', sa.TEXT(), nullable=True),
+-    sa.Column('model_version', sa.VARCHAR(length=20), nullable=True),
+-    sa.Column('config_version', sa.VARCHAR(length=20), nullable=True),
+-    sa.PrimaryKeyConstraint('id')
+-    )
+-    op.create_index(op.f('ix_audit_log_id'), 'audit_log', ['id'], unique=False)
+-    op.create_table('config_history',
+-    sa.Column('id', sa.INTEGER(), nullable=False),
+-    sa.Column('config_snapshot', sa.TEXT(), nullable=False),
+-    sa.Column('version', sa.VARCHAR(length=20), nullable=False),
+-    sa.Column('changed_by', sa.VARCHAR(length=50), nullable=False),
+-    sa.Column('created_at', sa.DATETIME(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+-    sa.PrimaryKeyConstraint('id')
+-    )
+-    op.create_index(op.f('ix_config_history_id'), 'config_history', ['id'], unique=False)
+-    # ### end Alembic commands ###
+diff --git a/backend/app/database.py b/backend/app/database.py
+index eb188f5..5d52ff6 100644
+--- a/backend/app/database.py
++++ b/backend/app/database.py
+@@ -35,27 +35,3 @@ def get_db() -> Generator[Session, None, None]:
+     finally:
+         db.close()
+ 
+-
+-def ensure_sqlite_decision_columns() -> None:
+-    """create_all does not add columns to an existing SQLite table."""
+-    if not db_url.startswith("sqlite"):
+-        return
+-    from sqlalchemy import inspect, text
+-
+-    inspector = inspect(engine)
+-    if "decisions" not in inspector.get_table_names():
+-        return
+-    existing = {c["name"] for c in inspector.get_columns("decisions")}
+-    needed = {
+-        "merchant_category": "VARCHAR(50)",
+-        "feature_snapshot": "TEXT",
+-        "is_counterintuitive": "BOOLEAN DEFAULT 0",
+-        "baseline_action": "VARCHAR(20) DEFAULT 'BLOCK'",
+-        "savings_vs_baseline": "FLOAT DEFAULT 0",
+-        "model_version": "VARCHAR(64) DEFAULT 'unloaded'",
+-        "config_version": "VARCHAR(20) DEFAULT '1.0'",
+-    }
+-    with engine.begin() as conn:
+-        for name, ddl in needed.items():
+-            if name not in existing:
+-                conn.execute(text(f"ALTER TABLE decisions ADD COLUMN {name} {ddl}"))
+diff --git a/backend/app/main.py b/backend/app/main.py
+index 866d65f..57d3895 100644
+--- a/backend/app/main.py
++++ b/backend/app/main.py
+@@ -8,7 +8,7 @@ from slowapi import _rate_limit_exceeded_handler
+ from slowapi.errors import RateLimitExceeded
+ from slowapi.middleware import SlowAPIMiddleware
+ 
+-from .database import engine, Base, ensure_sqlite_decision_columns
++from .database import engine, Base
+ from .routes import orders, payments, webhooks
+ from .routes import transactions, metrics, demo, queue, insights, audit, config as config_route
+ from .routes import cost_config, stream, whatif, learning
+@@ -26,7 +26,6 @@ async def lifespan(app: FastAPI):
+     # Only auto-create tables in development (production should use Alembic migrations)
+     if settings.ENVIRONMENT == "development":
+         Base.metadata.create_all(bind=engine)
+-        ensure_sqlite_decision_columns()
+ 
+     # Train models in background in dev; in production, validate artifacts exist
+     if settings.ENVIRONMENT == "development":
+diff --git a/backend/app/ml/models.py b/backend/app/ml/models.py
+index 7ed4e9a..9683206 100644
+--- a/backend/app/ml/models.py
++++ b/backend/app/ml/models.py
+@@ -1,8 +1,11 @@
+-﻿import os
++﻿import logging
++import os
+ import pickle
+ import random
+ from pathlib import Path
+ 
++logger = logging.getLogger("tiebreaker.ml")
++
+ try:
+     from sklearn.ensemble import GradientBoostingClassifier
+     from sklearn.linear_model import LinearRegression
+@@ -105,8 +108,8 @@ class ModelManager:
+                     artifact_version = data.get("version") or f"unversioned-{int(path.stat().st_mtime)}"
+                     if name == "fraud":
+                         self.model_version = artifact_version
+-                except Exception:
+-                    pass
++                except (FileNotFoundError, pickle.UnpicklingError, EOFError, KeyError) as e:
++                    logger.warning(f"Could not load {name} model artifact from {path}: {e}")
+ 
+         review_path = ARTIFACTS_DIR / "review_model.pkl"
+         if review_path.exists():
+@@ -115,8 +118,8 @@ class ModelManager:
+                     data = pickle.load(f)
+                 self.review_model = data["model"]
+                 self.review_features = data.get("features", REVIEW_FEATURES)
+-            except Exception:
+-                pass
++            except (FileNotFoundError, pickle.UnpicklingError, EOFError, KeyError) as e:
++                logger.warning(f"Could not load review model artifact from {review_path}: {e}")
+ 
+     def predict_fraud_prob(self, record: dict) -> float:
+         if self.fraud_model is not None and SKLEARN_AVAILABLE:
+@@ -124,8 +127,8 @@ class ModelManager:
+                 X = [_extract_features(record, self.fraud_features)]
+                 proba = self.fraud_model.predict_proba(X)[0][1]
+                 return round(float(proba), 4)
+-            except Exception:
+-                pass
++            except (ValueError, KeyError, IndexError) as e:
++                logger.warning(f"Fraud model inference failed, using heuristic fallback: {e}")
+         score = 0.0
+         score += min(record.get("amount", 0) / 200000, 1.0) * 0.25
+         score += min(record.get("velocity_1h", 0) / 15, 1.0) * 0.20
+@@ -141,8 +144,8 @@ class ModelManager:
+                 X = [_extract_features(record, self.fp_features)]
+                 proba = self.fp_model.predict_proba(X)[0][1]
+                 return round(float(proba), 4)
+-            except Exception:
+-                pass
++            except (ValueError, KeyError, IndexError) as e:
++                logger.warning(f"FP model inference failed, using heuristic fallback: {e}")
+         score = 0.0
+         score += (1 - min(record.get("amount", 0) / 100000, 1.0)) * 0.20
+         score += (1 - min(record.get("customer_tenure_days", 0) / 1000, 1.0)) * 0.30
+@@ -157,8 +160,8 @@ class ModelManager:
+                 X = [_extract_features(record, self.review_features)]
+                 pred = self.review_model.predict(X)[0]
+                 return round(float(max(pred, 1.0)), 2)
+-            except Exception:
+-                pass
++            except (ValueError, KeyError, IndexError) as e:
++                logger.warning(f"Review-time model inference failed, using heuristic fallback: {e}")
+         base = 2.0
+         base += record.get("is_fraud", 0) * 3.5
+         base += min(record.get("amount", 0) / 100000, 1.0) * 2.0
+@@ -201,7 +204,8 @@ class ModelManager:
+                 })
+             feature_impacts.sort(key=lambda x: abs(x["raw_value"]), reverse=True)
+             return feature_impacts[:top_n]
+-        except Exception:
++        except (ValueError, KeyError, IndexError, AttributeError, TypeError) as e:
++            logger.warning(f"SHAP explanation failed, using static fallback drivers: {e}")
+             return [
+                 {"feature": "amount", "impact": 0.15, "direction": "increases"},
+                 {"feature": "geo_mismatch", "impact": 0.12, "direction": "increases"},

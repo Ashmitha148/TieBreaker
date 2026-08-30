@@ -8,7 +8,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
-from .database import engine, Base, ensure_sqlite_decision_columns
+from .database import engine, Base
 from .routes import orders, payments, webhooks
 from .routes import transactions, metrics, demo, queue, insights, audit, config as config_route
 from .routes import cost_config, stream, whatif, learning
@@ -26,7 +26,6 @@ async def lifespan(app: FastAPI):
     # Only auto-create tables in development (production should use Alembic migrations)
     if settings.ENVIRONMENT == "development":
         Base.metadata.create_all(bind=engine)
-        ensure_sqlite_decision_columns()
 
     # Train models in background in dev; in production, validate artifacts exist
     if settings.ENVIRONMENT == "development":
