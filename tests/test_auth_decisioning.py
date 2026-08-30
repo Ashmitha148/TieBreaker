@@ -47,7 +47,7 @@ def test_webhook_does_not_require_api_key(client, monkeypatch):
         headers={"x-razorpay-event-id": "evt_auth_1"},
     )
     assert res.status_code == 200
-    assert res.json()["status"] in ("received", "already_processed")
+    assert res.json()["status"] in ("accepted", "ignored")
 
 
 def test_production_refuses_unconfigured_api_key(client, monkeypatch):

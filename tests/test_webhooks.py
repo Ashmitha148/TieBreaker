@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.app.config import settings
@@ -11,6 +12,39 @@ from backend.app.models import Order, Payment, WebhookEvent
 
 client = TestClient(app)
 TEST_WEBHOOK_SECRET = "test_webhook_secret_key_12345"
+
+# FIXED: this module talks to the real on-disk SQLite DB (via SessionLocal
+# from backend.app.database) instead of an isolated in-memory DB, so rows
+# from a previous run were silently making idempotency-check tests fail
+# ("ignored" instead of "accepted") on every re-run. This fixture wipes
+# exactly the rows this file creates before and after each test.
+_TEST_ID_PREFIXES = ("evt_test_", "evt_malformed_", "evt_order_tolerance_", "evt_auth_")
+_TEST_PAYMENT_PREFIXES = ("pay_test_",)
+_TEST_ORDER_PREFIXES = ("order_test_",)
+
+
+def _cleanup_webhook_test_rows():
+    db = SessionLocal()
+    try:
+        for event in db.query(WebhookEvent).all():
+            if event.event_id.startswith(_TEST_ID_PREFIXES):
+                db.delete(event)
+        for payment in db.query(Payment).all():
+            if payment.razorpay_payment_id and payment.razorpay_payment_id.startswith(_TEST_PAYMENT_PREFIXES):
+                db.delete(payment)
+        for order in db.query(Order).all():
+            if order.razorpay_order_id and order.razorpay_order_id.startswith(_TEST_ORDER_PREFIXES):
+                db.delete(order)
+        db.commit()
+    finally:
+        db.close()
+
+
+@pytest.fixture(autouse=True)
+def _clean_webhook_test_state():
+    _cleanup_webhook_test_rows()
+    yield
+    _cleanup_webhook_test_rows()
 
 
 def generate_signature(body_bytes: bytes, secret: str) -> str:

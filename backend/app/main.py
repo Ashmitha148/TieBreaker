@@ -79,6 +79,17 @@ app.include_router(stream.router, prefix="/api")
 app.include_router(whatif.router, prefix="/api")
 app.include_router(learning.router, prefix="/api")
 
+@app.get("/", tags=["Health"])
+def root():
+    return {
+        "project": settings.PROJECT_NAME,
+        "phase": "Phase 2 — Risk Decisioning",
+        "status": "ready",
+        "version": "2.0.0",
+        "docs": "/docs",
+    }
+
+
 @app.get("/health", tags=["Health"])
 def health_check():
     from .ml.predictor import get_model_health
