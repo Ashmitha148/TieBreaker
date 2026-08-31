@@ -40,7 +40,6 @@ def get_model_health() -> Dict[str, Any]:
     return {
         "fraud_model_loaded": mgr.fraud_model is not None,
         "fp_model_loaded": mgr.fp_model is not None,
-        "review_model_loaded": mgr.review_model is not None,
         "fraud_metrics": mgr.fraud_metrics,
         "fp_metrics": mgr.fp_metrics,
     }

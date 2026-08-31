@@ -1,14 +1,13 @@
-﻿import logging
-import os
-import pickle
-import random
+import logging
 from pathlib import Path
+
+import joblib
+import numpy as np
 
 logger = logging.getLogger("tiebreaker.ml")
 
 try:
     from sklearn.ensemble import GradientBoostingClassifier
-    from sklearn.linear_model import LinearRegression
     SKLEARN_AVAILABLE = True
 except ImportError:
     SKLEARN_AVAILABLE = False
@@ -24,50 +23,54 @@ ARTIFACTS_DIR = BASE_DIR / "artifacts"
 ARTIFACTS_DIR.mkdir(exist_ok=True)
 
 FRAUD_FEATURES = [
-    "amount", "velocity_1h", "velocity_24h", "device_change_flag",
-    "geo_mismatch_flag", "is_cross_border", "hour_of_day",
-    "customer_tenure_days", "customer_tx_count_30d", "customer_refund_rate"
+    "TransactionAmt",
+    "C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C10",
+    "C11", "C12", "C13", "C14",
+    "D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10",
+    "D11", "D12", "D13", "D14", "D15",
+    "V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10",
+    "card1", "card2", "card3", "card4", "card5", "card6",
+    "addr1", "addr2",
+    "hour_of_day",
+    "day_of_week",
+    "device_change_flag",
+    "geo_mismatch_flag",
+    "is_cross_border",
 ]
 
 FP_FEATURES = [
-    "amount", "customer_tenure_days", "customer_tx_count_30d",
-    "customer_refund_rate", "device_change_flag", "geo_mismatch_flag"
+    "TransactionAmt",
+    "C1", "C2", "C3", "C4", "C5",
+    "D1", "D2", "D3",
+    "V1", "V2", "V3", "V4", "V5",
+    "card1", "card2", "card3",
+    "addr1", "addr2",
+    "hour_of_day",
+    "device_change_flag",
+    "geo_mismatch_flag",
+    "is_cross_border",
 ]
 
-REVIEW_FEATURES = [
-    "amount", "fraud_prob", "customer_tenure_days",
-    "merchant_category_encoded", "hour_of_day"
-]
 
-
-def _encode_merchant(cat):
-    mapping = {"Retail": 0, "SaaS": 1, "B2B": 2, "Food": 3}
-    return mapping.get(cat, 0)
-
-
-def _extract_features(record, feature_names):
+def _extract_features(record: dict, feature_names: list) -> list:
     row = []
     for f in feature_names:
-        if f == "merchant_category_encoded":
-            row.append(_encode_merchant(record.get("merchant_category", "Retail")))
-        elif f == "fraud_prob":
-            row.append(record.get("fraud_prob", 0.5))
-        else:
-            row.append(record.get(f, 0))
+        val = record.get(f, 0)
+        if val is None or (isinstance(val, float) and np.isnan(val)):
+            val = 0.0
+        row.append(float(val))
     return row
 
 
 class ModelManager:
     _instance = None
-    
+
     def current_version_info(self):
         return {
             "version": self.model_version,
             "fraud_model_loaded": self.fraud_model is not None,
             "fp_model_loaded": self.fp_model is not None,
-            "review_model_loaded": self.review_model is not None,
         }
-    
 
     def __new__(cls):
         if cls._instance is None:
@@ -80,12 +83,12 @@ class ModelManager:
             return
         self.fraud_model = None
         self.fp_model = None
-        self.review_model = None
         self.fraud_features = FRAUD_FEATURES
         self.fp_features = FP_FEATURES
-        self.review_features = REVIEW_FEATURES
         self.fraud_metrics = {"precision": 0.75, "recall": 0.70, "f1": 0.72, "pr_auc": 0.72}
         self.fp_metrics = {"precision": 0.72, "recall": 0.68, "f1": 0.70, "pr_auc": 0.70}
+        self.fraud_threshold = 0.5
+        self.fp_threshold = 0.5
         self.model_version = "unloaded"
         self._load_models()
         self._initialized = True
@@ -94,32 +97,22 @@ class ModelManager:
         if not SKLEARN_AVAILABLE:
             return
         paths = {
-            "fraud": (ARTIFACTS_DIR / "fraud_model.pkl", FRAUD_FEATURES, self.fraud_metrics),
-            "fp": (ARTIFACTS_DIR / "fp_model.pkl", FP_FEATURES, self.fp_metrics),
+            "fraud": (ARTIFACTS_DIR / "fraud_model.joblib", FRAUD_FEATURES, self.fraud_metrics),
+            "fp": (ARTIFACTS_DIR / "fp_model.joblib", FP_FEATURES, self.fp_metrics),
         }
         for name, (path, feats, default_metrics) in paths.items():
             if path.exists():
                 try:
-                    with open(path, "rb") as f:
-                        data = pickle.load(f)
+                    data = joblib.load(path)
                     setattr(self, f"{name}_model", data["model"])
                     setattr(self, f"{name}_features", data.get("features", feats))
                     setattr(self, f"{name}_metrics", data.get("metrics", default_metrics))
+                    setattr(self, f"{name}_threshold", data.get("threshold", 0.5))
                     artifact_version = data.get("version") or f"unversioned-{int(path.stat().st_mtime)}"
                     if name == "fraud":
                         self.model_version = artifact_version
-                except (FileNotFoundError, pickle.UnpicklingError, EOFError, KeyError) as e:
+                except (FileNotFoundError, EOFError, KeyError) as e:
                     logger.warning(f"Could not load {name} model artifact from {path}: {e}")
-
-        review_path = ARTIFACTS_DIR / "review_model.pkl"
-        if review_path.exists():
-            try:
-                with open(review_path, "rb") as f:
-                    data = pickle.load(f)
-                self.review_model = data["model"]
-                self.review_features = data.get("features", REVIEW_FEATURES)
-            except (FileNotFoundError, pickle.UnpicklingError, EOFError, KeyError) as e:
-                logger.warning(f"Could not load review model artifact from {review_path}: {e}")
 
     def predict_fraud_prob(self, record: dict) -> float:
         if self.fraud_model is not None and SKLEARN_AVAILABLE:
@@ -130,7 +123,7 @@ class ModelManager:
             except (ValueError, KeyError, IndexError) as e:
                 logger.warning(f"Fraud model inference failed, using heuristic fallback: {e}")
         score = 0.0
-        score += min(record.get("amount", 0) / 200000, 1.0) * 0.25
+        score += min(record.get("TransactionAmt", 0) / 200000, 1.0) * 0.25
         score += min(record.get("velocity_1h", 0) / 15, 1.0) * 0.20
         score += record.get("device_change_flag", 0) * 0.15
         score += record.get("geo_mismatch_flag", 0) * 0.20
@@ -147,7 +140,7 @@ class ModelManager:
             except (ValueError, KeyError, IndexError) as e:
                 logger.warning(f"FP model inference failed, using heuristic fallback: {e}")
         score = 0.0
-        score += (1 - min(record.get("amount", 0) / 100000, 1.0)) * 0.20
+        score += (1 - min(record.get("TransactionAmt", 0) / 100000, 1.0)) * 0.20
         score += (1 - min(record.get("customer_tenure_days", 0) / 1000, 1.0)) * 0.30
         score += min(record.get("customer_tx_count_30d", 0) / 50, 1.0) * 0.20
         score += (1 - record.get("customer_refund_rate", 0)) * 0.15
@@ -155,18 +148,16 @@ class ModelManager:
         return round(min(score, 1.0), 4)
 
     def predict_review_time(self, record: dict) -> float:
-        if self.review_model is not None and SKLEARN_AVAILABLE:
-            try:
-                X = [_extract_features(record, self.review_features)]
-                pred = self.review_model.predict(X)[0]
-                return round(float(max(pred, 1.0)), 2)
-            except (ValueError, KeyError, IndexError) as e:
-                logger.warning(f"Review-time model inference failed, using heuristic fallback: {e}")
-        base = 2.0
-        base += record.get("is_fraud", 0) * 3.5
-        base += min(record.get("amount", 0) / 100000, 1.0) * 2.0
-        base += (1 - min(record.get("customer_tenure_days", 0) / 1000, 1.0)) * 1.5
-        return round(base, 2)
+        """
+        Deterministic review time:
+          - Fraud transactions: 8 minutes
+          - Legitimate transactions: 1 minute + (amount / 100000) * 2 minutes
+        """
+        is_fraud = record.get("is_fraud", 0)
+        amount = record.get("amount", 0) or record.get("TransactionAmt", 0)
+        if is_fraud:
+            return 8.0
+        return round(1.0 + (amount / 100000.0) * 2.0, 2)
 
     def get_shap_drivers(self, record: dict, top_n: int = 3) -> list:
         if not SHAP_AVAILABLE or self.fraud_model is None:
@@ -175,7 +166,7 @@ class ModelManager:
                 drivers.append({"feature": "geo_mismatch", "impact": 0.18, "direction": "increases"})
             if record.get("velocity_1h", 0) > 5:
                 drivers.append({"feature": "velocity_1h", "impact": 0.15, "direction": "increases"})
-            if record.get("amount", 0) > 100000:
+            if record.get("amount", 0) > 100000 or record.get("TransactionAmt", 0) > 100000:
                 drivers.append({"feature": "amount", "impact": 0.12, "direction": "increases"})
             if record.get("customer_tenure_days", 0) < 30:
                 drivers.append({"feature": "customer_tenure_days", "impact": -0.10, "direction": "decreases"})

@@ -73,6 +73,7 @@ class Decision(Base):
     config_version = Column(String(20), default="1.0", nullable=False)
     is_counterintuitive = Column(Boolean, default=False)
     feature_snapshot = Column(Text, nullable=True)
+    outcome = Column(String(20), nullable=True)  # captured / failed / refunded
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

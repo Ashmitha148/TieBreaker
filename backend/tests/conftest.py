@@ -8,7 +8,11 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.database import Base, get_db
+# CRITICAL: Override DATABASE_URL BEFORE importing database.py
+import os
+os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+
+from app.database import Base, get_db, SessionLocal
 from app.main import app
 from app.services.strike_selector import reset_queue_tracker
 from app.config import settings
@@ -32,6 +36,9 @@ def override_get_db():
 
 
 app.dependency_overrides[get_db] = override_get_db
+
+# Monkey-patch SessionLocal so background tasks (webhooks) also use test DB
+SessionLocal.configure(bind=engine)
 
 
 # Fixed transaction_ids referenced directly by name in test_override.py,
@@ -60,6 +67,7 @@ def setup_database():
                 model_version="test",
                 config_version="test",
                 is_counterintuitive=False,
+                outcome=None,
             ))
         session.commit()
     finally:
