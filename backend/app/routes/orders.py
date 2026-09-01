@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+﻿from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -21,33 +21,11 @@ def list_orders(db: Session = Depends(get_db)):
 def create_new_order(order_in: OrderCreate, db: Session = Depends(get_db)):
     """
     Create a Razorpay order, run ML fraud/FP prediction, and return
-the order_id along with the decision.
+    the order_id along with the decision.
     """
-    try:
-        rzp_order = create_order(
-            amount=order_in.amount,
-            currency=order_in.currency,
-            receipt=order_in.receipt,
-            notes=order_in.notes,
-        )
-    except RazorpayNotConfiguredError as e:
-        raise HTTPException(status_code=503, detail=str(e))
-
-    db_order = Order(
-        razorpay_order_id=rzp_order["id"],
-        amount=order_in.amount,
-        currency=order_in.currency,
-        status=rzp_order.get("status", "created"),
-        receipt=order_in.receipt,
-        notes=str(order_in.notes) if order_in.notes else None,
-    )
-    db.add(db_order)
-    db.commit()
-    db.refresh(db_order)
-
-    # Build a minimal record for ML prediction from order data
+    # 1. Run ML prediction FIRST so we know if 3DS is needed
     record = {
-        "TransactionAmt": order_in.amount / 100.0,  # Razorpay amount is in paise
+        "TransactionAmt": order_in.amount / 100.0,
         "amount": order_in.amount / 100.0,
         "hour_of_day": 12,
         "day_of_week": 0,
@@ -65,7 +43,7 @@ the order_id along with the decision.
     fraud_prob = prediction["fraud_probability"]
     fp_prob = prediction["fp_probability"]
 
-    # Determine recommended action based on fraud probability
+    # 2. Determine action + 3DS requirement
     if fraud_prob > 0.7:
         recommended_action = "BLOCK"
         requires_3ds = True
@@ -79,7 +57,24 @@ the order_id along with the decision.
         recommended_action = "ALLOW"
         requires_3ds = False
 
-    # Persist decision
+    # 3. Build notes dict and inject 3DS flag for high-risk transactions
+    notes = dict(order_in.notes) if order_in.notes else {}
+    if fraud_prob > 0.7:
+        notes["3ds"] = "true"
+        notes["requires_3ds"] = "true"
+
+    # 4. Create Razorpay order WITH the 3DS notes
+    try:
+        rzp_order = create_order(
+            amount=order_in.amount,
+            currency=order_in.currency,
+            receipt=order_in.receipt,
+            notes=notes,
+        )
+    except RazorpayNotConfiguredError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+    # 5. Persist decision
     decision = Decision(
         transaction_id=rzp_order["id"],
         fraud_prob=fraud_prob,
@@ -94,6 +89,18 @@ the order_id along with the decision.
         is_counterintuitive=False,
     )
     db.add(decision)
+    db.commit()
+
+    # 6. Persist order
+    db_order = Order(
+        razorpay_order_id=rzp_order["id"],
+        amount=order_in.amount,
+        currency=order_in.currency,
+        status=rzp_order.get("status", "created"),
+        receipt=order_in.receipt,
+        notes=str(notes) if notes else None,
+    )
+    db.add(db_order)
     db.commit()
 
     return {
