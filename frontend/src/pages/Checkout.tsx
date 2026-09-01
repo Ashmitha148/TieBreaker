@@ -14,7 +14,7 @@ export default function Checkout() {
   const [email, setEmail] = useState('user@example.com')
   const [phone, setPhone] = useState('9999999999')
   const [method, setMethod] = useState<'upi' | 'card' | 'netbanking'>('upi')
-  const [stage, setStage] = useState<'form' | 'processing' | 'result'>('form')
+  const [stage, setStage] = useState<'form' | 'processing' | '3ds_required' | 'result'>('form')
   const [result, setResult] = useState<any>(null)
   const [pipelineSteps, setPipelineSteps] = useState<any[]>([])
 
@@ -44,16 +44,49 @@ export default function Checkout() {
   }
 
   const handlePay = async () => {
-    const txId = 'pay_' + Math.random().toString(36).slice(2, 10)
+    setStage('processing')
     try {
-      await fetch(`${API_URL}/api/orders`, {
+      const res = await fetch(`${API_URL}/api/create-order`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: Number(amount) * 100, currency: 'INR' })
+        headers: apiHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ 
+          amount: Number(amount) * 100,  // paise
+          currency: 'INR',
+          receipt: `rcpt_${Date.now()}`,
+        })
       })
-    } catch {
-      // Order creation requires Razorpay keys; checkout scoring still runs below.
+      
+      if (!res.ok) {
+        const err = await res.text()
+        throw new Error(err || `HTTP ${res.status}`)
+      }
+      
+      const data = await res.json()
+      
+      // Handle 3DS requirement
+      if (data.requires_3ds) {
+        setStage('3ds_required')
+        // TODO: Integrate Razorpay 3DS flow here
+        // Razorpay checkout with `order_id: data.order_id`
+        return
+      }
+      
+      const decision = {
+        transaction_id: data.order_id,
+        amount: Number(amount),
+        recommended_action: data.recommended_action,
+        fraud_probability: data.fraud_prob,
+        fp_probability: data.fp_prob,
+        is_counterintuitive: false,
+      }
+      
+      startPipeline(data.order_id, decision)
+    } catch (e) {
+      console.error(e)
+      setStage('form')
+      alert('Payment failed: ' + (e as Error).message)
     }
+  }
 
     let decision: any = null
     try {
@@ -168,7 +201,19 @@ export default function Checkout() {
                 </div>
               </motion.div>
             )}
-
+            {stage === '3ds_required' && (
+  <motion.div className="float-card p-6 text-center">
+    <Shield className="w-12 h-12 text-amber-400 mx-auto mb-4" />
+    <h3 className="text-lg font-bold text-white mb-2">3D Secure Authentication Required</h3>
+    <p className="text-sm text-[#475569] mb-4">
+      This transaction requires additional verification for security.
+    </p>
+    <button onClick={() => setStage('form')}
+      className="text-[12px] text-[#3395FF] hover:text-[#5aabff] font-bold">
+      ← Cancel
+    </button>
+  </motion.div>
+)}
             {(stage === 'processing' || stage === 'result') && (
               <motion.div key="processing" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
                 <div>

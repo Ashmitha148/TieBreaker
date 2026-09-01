@@ -8,8 +8,9 @@ Trains:
 Validation-only threshold tuning is performed on the validation split.
 Test-set metrics are reported but NEVER used to pick thresholds.
 
-Artifacts are persisted as .joblib (not .pkl).
+Artifacts are persisted as .joblib with SHA-256 sidecars.
 """
+import hashlib
 import warnings
 from pathlib import Path
 
@@ -34,6 +35,24 @@ FRAUD_MODEL_PATH = ARTIFACTS_DIR / "fraud_model.joblib"
 FP_MODEL_PATH = ARTIFACTS_DIR / "fp_model.joblib"
 FRAUD_THRESHOLD_PATH = ARTIFACTS_DIR / "fraud_threshold.joblib"
 FP_THRESHOLD_PATH = ARTIFACTS_DIR / "fp_threshold.joblib"
+
+
+def _compute_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(8192)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _save_artifact(data, path: Path):
+    """Persist artifact as .joblib with a SHA-256 sidecar file."""
+    joblib.dump(data, path)
+    sidecar = path.with_suffix(path.suffix + ".sha256")
+    sidecar.write_text(_compute_sha256(path))
 
 
 def _train_fraud_model(X_train: np.ndarray, y_train: np.ndarray):
@@ -73,11 +92,6 @@ def _tune_threshold(
     target_metric: str = "recall",
     target_value: float = 0.45,
 ):
-    """
-    Validation-only threshold search.
-    Scans thresholds in [0.10, 0.90] and returns the best threshold that
-    meets the target metric value.
-    """
     proba = model.predict_proba(X_val)[:, 1]
     best_threshold = 0.5
     best_score = 0.0
@@ -119,9 +133,6 @@ def train_all():
     train, val, test = load_data()
     print(f"Loaded: train={len(train)}, val={len(val)}, test={len(test)}")
 
-    # -------------------------------------------------------------------
-    # Fraud model
-    # -------------------------------------------------------------------
     X_train_fraud = get_feature_matrix(train, FRAUD_FEATURES)
     y_train_fraud = train["isFraud"].values
     X_val_fraud = get_feature_matrix(val, FRAUD_FEATURES)
@@ -140,9 +151,6 @@ def train_all():
     )
     print(f"Fraud metrics (threshold={fraud_threshold}):", fraud_metrics)
 
-    # -------------------------------------------------------------------
-    # FP model (with SMOTE)
-    # -------------------------------------------------------------------
     X_train_fp = get_feature_matrix(train, FP_FEATURES)
     y_train_fp = train["is_false_positive"].values
     X_val_fp = get_feature_matrix(val, FP_FEATURES)
@@ -161,9 +169,6 @@ def train_all():
     )
     print(f"FP metrics (threshold={fp_threshold}):", fp_metrics)
 
-    # -------------------------------------------------------------------
-    # Real-data validation gate: TEST FP recall must be >= 0.45
-    # -------------------------------------------------------------------
     if fp_metrics.get("recall", 0) < 0.45:
         warnings.warn(
             f"TEST FP recall {fp_metrics.get('recall', 0):.3f} < 0.45 target. "
@@ -171,10 +176,7 @@ def train_all():
             "different model architecture."
         )
 
-    # -------------------------------------------------------------------
-    # Persist artifacts as .joblib
-    # -------------------------------------------------------------------
-    joblib.dump(
+    _save_artifact(
         {
             "model": fraud_model,
             "features": FRAUD_FEATURES,
@@ -185,7 +187,7 @@ def train_all():
         FRAUD_MODEL_PATH,
     )
 
-    joblib.dump(
+    _save_artifact(
         {
             "model": fp_model,
             "features": FP_FEATURES,
@@ -196,8 +198,8 @@ def train_all():
         FP_MODEL_PATH,
     )
 
-    joblib.dump({"threshold": fraud_threshold}, FRAUD_THRESHOLD_PATH)
-    joblib.dump({"threshold": fp_threshold}, FP_THRESHOLD_PATH)
+    _save_artifact({"threshold": fraud_threshold}, FRAUD_THRESHOLD_PATH)
+    _save_artifact({"threshold": fp_threshold}, FP_THRESHOLD_PATH)
 
     print(f"Artifacts saved to {ARTIFACTS_DIR}")
     print("  - fraud_model.joblib")

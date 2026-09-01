@@ -36,8 +36,8 @@ FRAUD_FEATURES = [
     "D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10",
     "D11", "D12", "D13", "D14", "D15",
     "V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10",
-    "card1", "card2", "card3", "card5",  # card4/card6 removed (strings)
-    "card4_encoded", "card6_encoded",       # encoded versions
+    "card1", "card2", "card3", "card5",
+    "card4_encoded", "card6_encoded",
     "addr1", "addr2",
     "hour_of_day",
     "day_of_week",
@@ -45,7 +45,6 @@ FRAUD_FEATURES = [
     "geo_mismatch_flag",
     "is_cross_border",
 ]
-
 FP_FEATURES = [
     "TransactionAmt",
     "C1", "C2", "C3", "C4", "C5",

@@ -16,6 +16,7 @@ from .startup import ensure_models_trained
 from .config import settings
 from .rate_limit import limiter
 from .ml.models import get_model_manager
+from .middleware.correlation import CorrelationIdMiddleware
 from . import models as _models  # noqa: F401 — register tables on Base.metadata
 
 logger = logging.getLogger(__name__)
@@ -23,16 +24,23 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Only auto-create tables in development (production should use Alembic migrations)
-    if settings.ENVIRONMENT == "development":
-        Base.metadata.create_all(bind=engine)
+    # SQLite production guard
+    if settings.ENVIRONMENT == "production" and "sqlite" in settings.DATABASE_URL.lower():
+        raise RuntimeError("SQLite is not allowed in production")
+
+    # Run Alembic migrations in all environments
+    from alembic.config import Config
+    from alembic import command
+    from pathlib import Path
+    alembic_ini = Path(__file__).parent.parent / "alembic.ini"
+    alembic_cfg = Config(str(alembic_ini))
+    command.upgrade(alembic_cfg, "head")
 
     # Train models in background in dev; in production, validate artifacts exist
     if settings.ENVIRONMENT == "development":
         loop = asyncio.get_event_loop()
         loop.run_in_executor(None, ensure_models_trained)
     else:
-        # Production: fail fast if ML artifacts are missing
         mgr = get_model_manager()
         fraud_loaded = mgr.fraud_model is not None
         fp_loaded = mgr.fp_model is not None
@@ -60,14 +68,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(CorrelationIdMiddleware)
+
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
-# CORS: in production this must be exactly the deployed frontend origin.
-# Never trust a wildcard or a localhost entry in production — a
-# misconfigured env var should fail loudly rather than silently widen
-# access to the API from any origin.
 _PRODUCTION_ALLOWED_ORIGINS = ["https://tie-breaker-pi.vercel.app"]
 
 if settings.ENVIRONMENT == "production":
@@ -107,6 +113,7 @@ app.include_router(stream.router, prefix="/api")
 app.include_router(whatif.router, prefix="/api")
 app.include_router(learning.router, prefix="/api")
 
+
 @app.get("/health", tags=["Health"])
 def health_check():
     from .ml.predictor import get_model_health
@@ -115,7 +122,6 @@ def health_check():
     ml_health = get_model_health()
     vel_engine = get_velocity_engine(fail_silent=True)
 
-    # Determine real status
     status = "ok"
     degraded_reasons = []
 

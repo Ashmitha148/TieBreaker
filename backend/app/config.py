@@ -1,64 +1,38 @@
-
-from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "TieBreaker"
+    # Application
+    APP_NAME: str = "TieBreaker"
     ENVIRONMENT: str = "development"
     DEBUG: bool = True
 
-    # Database: Default to SQLite local fallback, ready for PostgreSQL via DATABASE_URL
-    DATABASE_URL: str = "sqlite:///./tiebreaker.db"
+    # Database: Default to PostgreSQL
+    DATABASE_URL: str = "postgresql+psycopg2://tiebreaker:tiebreaker@localhost:5432/tiebreaker"
 
     # Razorpay Test Mode Credentials (Never expose secrets to client)
     RAZORPAY_KEY_ID: str = ""
     RAZORPAY_KEY_SECRET: str = ""
-    RAZORPAY_WEBHOOK_SECRET: str = ""
-    # Redis: Railway injects REDIS_URL. Fallback to local Redis.
+
+    # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
 
     # API key for scoring / learning endpoints (not used on Razorpay webhooks)
     TIEBREAKER_API_KEY: str = ""
 
+    # PII encryption key (generate with Fernet.generate_key())
+    ENCRYPTION_KEY: str = ""
+
     # ML configuration
     ML_RANDOM_SEED: int = 42
     ML_INTERNAL_TOKEN: str = ""
-    GCS_ARTIFACT_BUCKET: str = ""
 
-    # CORS Origins
-    BACKEND_CORS_ORIGINS: list[str] | str = [
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:3000",
-    ]
+    # CORS
+    BACKEND_CORS_ORIGINS: list = ["*"]
 
-    @field_validator("BACKEND_CORS_ORIGINS", mode="before")
-    @classmethod
-    def assemble_cors_origins(cls, v: str | list[str]) -> list[str]:
-        if isinstance(v, str) and not v.startswith("["):
-            return [i.strip() for i in v.split(",") if i.strip()]
-        elif isinstance(v, list):
-            return [str(i) for i in v]
-        return v
-
-    @property
-    def is_razorpay_configured(self) -> bool:
-        """Returns True only when real/valid Razorpay key ID and secret are configured."""
-        key_id = self.RAZORPAY_KEY_ID.strip()
-        key_secret = self.RAZORPAY_KEY_SECRET.strip()
-        if not key_id or not key_secret:
-            return False
-        if key_id == "rzp_test_..." or key_secret == "...":
-            return False
-        return True
-
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=True,
-        extra="ignore",
-    )
+    class Config:
+        env_file = ".env"
+        case_sensitive = True
 
 
 settings = Settings()

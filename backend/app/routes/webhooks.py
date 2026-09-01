@@ -1,134 +1,204 @@
-﻿from fastapi import APIRouter, Depends, HTTPException, Header, Request, BackgroundTasks
-from sqlalchemy.orm import Session
-from typing import Optional
+﻿import hmac
 import hashlib
-import hmac
-import json
 import logging
+from uuid import uuid4
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, Header, HTTPException, BackgroundTasks, Request
+from sqlalchemy.orm import Session
 
 from ..database import get_db, SessionLocal
 from ..models import WebhookEvent, Payment, Order, Decision
 from ..config import settings
 
 router = APIRouter()
-logger = logging.getLogger("tiebreaker.webhooks")
+logger = logging.getLogger(__name__)
 
 
-def verify_webhook_signature(payload: bytes, signature: str, secret: str) -> bool:
-    if not secret or not signature:
-        return False
-    expected = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, signature)
-
-
-def _process_webhook_event(event_type: str, payload: dict):
-    """
-    Background task: process webhook event with its OWN SessionLocal.
-    NEVER uses a request-scoped DB session.
-    """
-    db = SessionLocal()
-    try:
-        entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
-        if not entity:
-            entity = payload.get("payload", {}).get("order", {}).get("entity", {})
-        payment_id = entity.get("id", "")
-        order_id = entity.get("order_id", "")
-        status = entity.get("status", "")
-        amount = entity.get("amount", 0)
-        method = entity.get("method", "")
-
-        payment = db.query(Payment).filter(Payment.razorpay_payment_id == payment_id).first()
-        if payment:
-            payment.status = status
-            payment.method = method
-            payment.raw_payload = json.dumps(payload)
-        else:
-            order = db.query(Order).filter(Order.razorpay_order_id == order_id).first()
-            new_payment = Payment(
-                razorpay_payment_id=payment_id,
-                razorpay_order_id=order_id,
-                order_id=order.id if order else None,
-                amount=amount,
-                status=status,
-                method=method,
-                raw_payload=json.dumps(payload),
-            )
-            db.add(new_payment)
-
-        # Update Decision outcome for payment.captured / payment.failed / refund.processed
-        if event_type in ("payment.captured", "payment.failed", "refund.processed"):
-            decision = db.query(Decision).filter(Decision.transaction_id == order_id).first()
-            if decision:
-                if event_type == "payment.captured":
-                    decision.outcome = "captured"
-                elif event_type == "payment.failed":
-                    decision.outcome = "failed"
-                elif event_type == "refund.processed":
-                    decision.outcome = "refunded"
-
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Webhook background processing failed: {e}")
-        raise
-    finally:
-        db.close()
-
-
-@router.post("/webhooks/razorpay")
-async def razorpay_webhook(
+@router.post("/webhook")
+async def receive_webhook(
     request: Request,
     background_tasks: BackgroundTasks,
+    x_razorpay_signature: str | None = Header(default=None),
     db: Session = Depends(get_db),
-    x_razorpay_event_id: Optional[str] = Header(None),
-    x_razorpay_signature: Optional[str] = Header(None),
 ):
-    body = await request.body()
-    payload = await request.json()
-    event_type = payload.get("event", "unknown")
+    """
+    Receive Razorpay webhooks asynchronously.
+    Verifies HMAC signature, stores raw payload, and processes asynchronously.
+    """
+    payload = await request.body()
 
-    secret = settings.RAZORPAY_WEBHOOK_SECRET or settings.RAZORPAY_KEY_SECRET or ""
-    # Fail CLOSED: verify before touching the DB at all
-    if not secret:
-        raise HTTPException(status_code=401, detail="Webhook secret not configured")
-    if not x_razorpay_signature:
-        raise HTTPException(status_code=401, detail="Missing signature")
-    if not verify_webhook_signature(body, x_razorpay_signature, secret):
-        raise HTTPException(status_code=401, detail="Invalid signature")
+    # Verify webhook signature
+    secret = settings.RAZORPAY_KEY_SECRET
+    if secret and x_razorpay_signature:
+        if not verify_webhook_signature(payload, x_razorpay_signature, secret):
+            raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
-    if x_razorpay_event_id:
-        existing = db.query(WebhookEvent).filter(WebhookEvent.event_id == x_razorpay_event_id).first()
-        if existing:
-            return {"status": "already_processed", "event_id": x_razorpay_event_id}
+    try:
+        payload_json = await request.json()
+    except Exception:
+        payload_json = {"raw_body": payload.decode("utf-8", errors="replace")}
 
+    # Create initial webhook event record synchronously
     event = WebhookEvent(
-        event_id=x_razorpay_event_id or f"evt_{hashlib.md5(body).hexdigest()[:12]}",
-        event_type=event_type,
-        entity_id=payload.get("payload", {}).get("payment", {}).get("entity", {}).get("id", ""),
+        event_id=payload_json.get("id", str(uuid4())),
+        event_type=payload_json.get("event", "unknown"),
+        entity_id=payload_json.get("payload", {}).get("payment", {}).get("entity", {}).get("id"),
         status="received",
-        payload=json.dumps(payload),
+        payload=str(payload_json),
     )
     db.add(event)
     db.commit()
 
-    # Background task uses its own SessionLocal — never the request-scoped db
-    background_tasks.add_task(_process_webhook_event, event_type, payload)
+    # Process webhook asynchronously
+    background_tasks.add_task(process_webhook_event, payload_json)
+
     return {"status": "received", "event_id": event.event_id}
 
 
-@router.get("/webhooks")
-def list_webhooks(db: Session = Depends(get_db)):
-    events = db.query(WebhookEvent).order_by(WebhookEvent.created_at.desc()).limit(50).all()
+def process_webhook_event(payload: dict):
+    """
+    Process a Razorpay webhook event asynchronously.
+    Creates its own DB session - do NOT pass the request-scoped session here.
+    """
+    db = SessionLocal()
+    try:
+        # Create webhook event record
+        event = WebhookEvent(
+            event_id=payload.get("id", str(uuid4())),
+            event_type=payload.get("event", "unknown"),
+            entity_id=payload.get("payload", {}).get("payment", {}).get("entity", {}).get("id"),
+            status="processing",
+            payload=str(payload),
+        )
+        db.add(event)
+        db.commit()
+
+        event_type = payload.get("event", "")
+        payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
+
+        # Update payment status
+        payment_id = payment_entity.get("id")
+        if payment_id:
+            payment = db.query(Payment).filter(
+                Payment.razorpay_payment_id == payment_id
+            ).first()
+
+            if payment:
+                payment.status = payment_entity.get("status", payment.status)
+                payment.method = payment_entity.get("method", payment.method)
+                payment.bank = payment_entity.get("bank", payment.bank)
+                payment.wallet = payment_entity.get("wallet", payment.wallet)
+                payment.vpa = payment_entity.get("vpa", payment.vpa)
+                payment.email = payment_entity.get("email", payment.email)
+                payment.contact = payment_entity.get("contact", payment.contact)
+                payment.error_code = payment_entity.get("error_code", payment.error_code)
+                payment.error_description = payment_entity.get("error_description", payment.error_description)
+                payment.error_source = payment_entity.get("error_source", payment.error_source)
+                payment.error_step = payment_entity.get("error_step", payment.error_step)
+                payment.error_reason = payment_entity.get("error_reason", payment.error_reason)
+                payment.raw_payload = str(payload)
+                db.commit()
+
+        # Handle specific event types
+        if event_type == "payment.captured":
+            order_id = payment_entity.get("order_id")
+            if order_id:
+                order = db.query(Order).filter(
+                    Order.razorpay_order_id == order_id
+                ).first()
+                if order:
+                    order.status = "paid"
+                    db.commit()
+
+            # Update decision outcome
+            decision = db.query(Decision).filter(
+                Decision.transaction_id == payment_id
+            ).first()
+            if decision:
+                decision.outcome = "legitimate"
+                db.commit()
+
+        elif event_type == "payment.failed":
+            # Update decision outcome for failed payments
+            decision = db.query(Decision).filter(
+                Decision.transaction_id == payment_id
+            ).first()
+            if decision:
+                decision.outcome = "fraudulent"
+                db.commit()
+
+        elif event_type == "refund.processed":
+            # Update decision outcome for refunds
+            decision = db.query(Decision).filter(
+                Decision.transaction_id == payment_id
+            ).first()
+            if decision:
+                decision.outcome = "refunded"
+                db.commit()
+
+        # Mark event as processed
+        event.status = "processed"
+        event.processed_at = datetime.utcnow()
+        db.commit()
+
+        logger.info(f"Webhook event {event.event_id} processed successfully")
+
+    except Exception as e:
+        logger.error(f"Error processing webhook: {str(e)}")
+        # Update event status to failed
+        event.status = "failed"
+        event.error_message = str(e)
+        db.commit()
+    finally:
+        db.close()
+
+
+def verify_webhook_signature(payload_body: bytes, signature: str, secret: str) -> bool:
+    """
+    Verify Razorpay webhook signature using HMAC-SHA256.
+    """
+    try:
+        expected_signature = hmac.new(
+            secret.encode(),
+            payload_body,
+            hashlib.sha256
+        ).hexdigest()
+        return hmac.compare_digest(expected_signature, signature)
+    except Exception:
+        return False
+
+
+@router.get("/webhooks", tags=["Webhooks"])
+def list_webhooks(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+):
+    """List all received webhook events."""
+    events = db.query(WebhookEvent).order_by(
+        WebhookEvent.created_at.desc()
+    ).offset(skip).limit(limit).all()
+
     return {
-        "events": [
-            {
-                "id": e.id,
-                "event_id": e.event_id,
-                "event_type": e.event_type,
-                "entity_id": e.entity_id,
-                "status": e.status,
-                "created_at": e.created_at.isoformat() if e.created_at else None,
-            }
-            for e in events
-        ]
+        "events": events,
+        "total": db.query(WebhookEvent).count(),
+        "skip": skip,
+        "limit": limit,
     }
+
+
+@router.get("/webhooks/{event_id}", tags=["Webhooks"])
+def get_webhook_event(
+    event_id: str,
+    db: Session = Depends(get_db),
+):
+    """Get a specific webhook event by ID."""
+    event = db.query(WebhookEvent).filter(
+        WebhookEvent.event_id == event_id
+    ).first()
+
+    if not event:
+        raise HTTPException(status_code=404, detail="Webhook event not found")
+
+    return event
