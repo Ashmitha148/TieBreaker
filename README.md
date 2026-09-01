@@ -6,7 +6,7 @@ TieBreaker scores a transaction with two models (fraud and false-positive), then
 
 ## Live Demo
 
-**Live application:** https://tie-breaker-pi.vercel.app/checkout
+**Live application:** https://tie-breaker-pi.vercel.app/checkouts
 
 The public demo runs the React/Vite frontend deployed on Vercel and connects to the deployed FastAPI backend.
 
@@ -127,8 +127,10 @@ Set the same value in Railway (`TIEBREAKER_API_KEY`) and Vercel (`VITE_API_KEY`)
 - Issues: https://github.com/Ashmitha148/TieBreaker/issues
 - Docs in-repo: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/API.md](docs/API.md), [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 
-Older docs still mention XGBoost, JWT, and 47 features. Prefer this README and the code when they disagree.
+
 
 ## License
 
-MIT (see `LICENSE` if present in the repo).
+## License
+
+MIT License. See `LICENSE` for details.

@@ -1,4 +1,4 @@
-"""
+﻿"""
 TieBreaker data loader for real IEEE-CIS Fraud Detection dataset.
 
 Loads train_transaction.csv and train_identity.csv, joins on TransactionID,
@@ -36,7 +36,8 @@ FRAUD_FEATURES = [
     "D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10",
     "D11", "D12", "D13", "D14", "D15",
     "V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10",
-    "card1", "card2", "card3", "card4", "card5", "card6",
+    "card1", "card2", "card3", "card5",  # card4/card6 removed (strings)
+    "card4_encoded", "card6_encoded",       # encoded versions
     "addr1", "addr2",
     "hour_of_day",
     "day_of_week",
@@ -50,14 +51,14 @@ FP_FEATURES = [
     "C1", "C2", "C3", "C4", "C5",
     "D1", "D2", "D3",
     "V1", "V2", "V3", "V4", "V5",
-    "card1", "card2", "card3",
+    "card1", "card2", "card3", "card5",
+    "card4_encoded", "card6_encoded",
     "addr1", "addr2",
     "hour_of_day",
     "device_change_flag",
     "geo_mismatch_flag",
     "is_cross_border",
 ]
-
 
 def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     """Derive synthetic-but-meaningful features from raw IEEE-CIS columns."""
@@ -95,14 +96,26 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     else:
         df["is_cross_border"] = 0
 
+    # Encode categorical card columns
+    # card4: visa=1, mastercard=2, amex=3, discover=4, other=0
+    if "card4" in df.columns:
+        card4_map = {"visa": 1, "mastercard": 2, "amex": 3, "discover": 4}
+        df["card4_encoded"] = df["card4"].str.lower().map(card4_map).fillna(0).astype(int)
+    else:
+        df["card4_encoded"] = 0
+
+    # card6: credit=1, debit=2, other=0
+    if "card6" in df.columns:
+        card6_map = {"credit": 1, "debit": 2}
+        df["card6_encoded"] = df["card6"].str.lower().map(card6_map).fillna(0).astype(int)
+    else:
+        df["card6_encoded"] = 0
+
     # Fill NaNs for numeric columns used as features
     numeric_cols = [c for c in df.columns if df[c].dtype.kind in "iufc"]
     df[numeric_cols] = df[numeric_cols].fillna(0)
 
-    # -----------------------------------------------------------------------
-    # Create FP label: legitimate transactions that look risky.
-    # This is a heuristic derived from the real data itself (not synthetic).
-    # -----------------------------------------------------------------------
+    # Create FP label: legitimate transactions that look risky
     if TX_FRAUD_COL in df.columns:
         amt_median = (
             df[TX_AMT_COL].median() if TX_AMT_COL in df.columns else 100.0
@@ -132,7 +145,6 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         df["is_false_positive"] = 0
 
     return df
-
 
 def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
