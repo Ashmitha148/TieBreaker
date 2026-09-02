@@ -1,5 +1,4 @@
-﻿from fastapi import APIRouter
-
+from fastapi import APIRouter
 from ..config import settings
 
 router = APIRouter()
@@ -13,13 +12,17 @@ CURRENT_CONFIG = {
 }
 
 
+def _is_razorpay_configured() -> bool:
+    return getattr(settings, "is_razorpay_configured", False)
+
+
 @router.get("/config")
 def get_config():
     return {
-        "is_configured": settings.is_razorpay_configured,
+        "is_configured": _is_razorpay_configured(),
         "environment": settings.ENVIRONMENT,
         "is_test_mode": True,
-        "razorpay_key_id": settings.RAZORPAY_KEY_ID if settings.is_razorpay_configured else None,
+        "razorpay_key_id": settings.RAZORPAY_KEY_ID if _is_razorpay_configured() else None,
         "current": CURRENT_CONFIG,
         "version": "1.0",
     }

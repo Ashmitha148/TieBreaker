@@ -49,20 +49,20 @@ export default function Checkout() {
       const res = await fetch(`${API_URL}/api/create-order`, {
         method: 'POST',
         headers: apiHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           amount: Number(amount) * 100,  // paise
           currency: 'INR',
           receipt: `rcpt_${Date.now()}`,
         })
       })
-      
+
       if (!res.ok) {
         const err = await res.text()
         throw new Error(err || `HTTP ${res.status}`)
       }
-      
+
       const data = await res.json()
-      
+
       // Handle 3DS requirement
       if (data.requires_3ds) {
         setStage('3ds_required')
@@ -70,7 +70,7 @@ export default function Checkout() {
         // Razorpay checkout with `order_id: data.order_id`
         return
       }
-      
+
       const decision = {
         transaction_id: data.order_id,
         amount: Number(amount),
@@ -79,44 +79,13 @@ export default function Checkout() {
         fp_probability: data.fp_prob,
         is_counterintuitive: false,
       }
-      
+
       startPipeline(data.order_id, decision)
     } catch (e) {
       console.error(e)
       setStage('form')
       alert('Payment failed: ' + (e as Error).message)
     }
-  }
-
-    let decision: any = null
-    try {
-      const scored = await fetch(`${API_URL}/api/transactions`, {
-        method: 'POST',
-        headers: apiHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
-          transaction_id: txId,
-          customer_id: email || phone || 'checkout-customer',
-          amount: Number(amount),
-          ltv: Math.max(Number(amount) * 8, 1000),
-          payment_method: method,
-          merchant_category: 'Retail',
-        }),
-      })
-      if (!scored.ok) throw new Error('Decision endpoint failed')
-      const data = await scored.json()
-      decision = {
-        transaction_id: data.transaction_id,
-        amount: Number(amount),
-        recommended_action: data.recommended_action,
-        fraud_probability: data.fraud_probability,
-        fp_probability: data.fp_probability,
-        is_counterintuitive: data.is_counterintuitive,
-        velocity_source: data.velocity_source,
-      }
-    } catch {
-      decision = null
-    }
-    startPipeline(txId, decision)
   }
 
   return (
@@ -202,18 +171,18 @@ export default function Checkout() {
               </motion.div>
             )}
             {stage === '3ds_required' && (
-  <motion.div className="float-card p-6 text-center">
-    <Shield className="w-12 h-12 text-amber-400 mx-auto mb-4" />
-    <h3 className="text-lg font-bold text-white mb-2">3D Secure Authentication Required</h3>
-    <p className="text-sm text-[#475569] mb-4">
-      This transaction requires additional verification for security.
-    </p>
-    <button onClick={() => setStage('form')}
-      className="text-[12px] text-[#3395FF] hover:text-[#5aabff] font-bold">
-      ← Cancel
-    </button>
-  </motion.div>
-)}
+              <motion.div className="float-card p-6 text-center">
+                <Shield className="w-12 h-12 text-amber-400 mx-auto mb-4" />
+                <h3 className="text-lg font-bold text-white mb-2">3D Secure Authentication Required</h3>
+                <p className="text-sm text-[#475569] mb-4">
+                  This transaction requires additional verification for security.
+                </p>
+                <button onClick={() => setStage('form')}
+                  className="text-[12px] text-[#3395FF] hover:text-[#5aabff] font-bold">
+                  ← Cancel
+                </button>
+              </motion.div>
+            )}
             {(stage === 'processing' || stage === 'result') && (
               <motion.div key="processing" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
                 <div>

@@ -197,16 +197,16 @@ def main():
     test = load_csv("test.csv")
     print(f"Loaded {len(test)} test records\n")
 
-    try:
-        with open(ARTIFACTS / "fraud_model.pkl", "rb") as f:
-            fraud_artifact = pickle.load(f)
-        with open(ARTIFACTS / "fp_model.pkl", "rb") as f:
-            fp_artifact = pickle.load(f)
+       try:
+        with open(ARTIFACTS / "fraud_model.joblib", "rb") as f:
+            fraud_artifact = joblib.load(f)
+        with open(ARTIFACTS / "fp_model.joblib", "rb") as f:
+            fp_artifact = joblib.load(f)
     except FileNotFoundError as e:
         print(f"ERROR: Missing model artifact — {e}")
-        print("Run backend/app/ml/train_models.py first to generate fraud_model.pkl and fp_model.pkl")
+        print("Run backend/app/ml/train_models.py first to generate fraud_model.joblib and fp_model.joblib")
         sys.exit(1)
-    except pickle.UnpicklingError as e:
+    except Exception as e:
         print(f"ERROR: Model artifact is corrupt or unreadable — {e}")
         sys.exit(1)
 

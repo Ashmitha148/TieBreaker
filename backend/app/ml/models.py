@@ -82,6 +82,7 @@ class ModelManager:
         self.fp_threshold = 0.5
         self.fraud_metrics = {}
         self.fp_metrics = {}
+        self._version_info = {"version": "unloaded"}
         self._load_models()
 
     def _load_models(self):
@@ -103,11 +104,70 @@ class ModelManager:
                     setattr(self, f"{name}_features", data.get("features", feats))
                     setattr(self, f"{name}_threshold", data.get("threshold", 0.5))
                     setattr(self, f"{name}_metrics", data.get("metrics", default_metrics))
+                    self._version_info = {
+                        "version": data.get("version", "unknown"),
+                        "best_params": data.get("best_params", {}),
+                    }
                     logger.info(f"Loaded {name} model from {path}")
                 except Exception as e:
                     logger.warning(f"Failed to load {name} model: {e}")
             else:
                 logger.warning(f"{name} model artifact not found at {path}")
+
+    # ------------------------------------------------------------------
+    # Version info
+    # ------------------------------------------------------------------
+    def current_version_info(self) -> dict:
+        """Return metadata about the currently loaded model artifacts."""
+        return self._version_info
+
+    # ------------------------------------------------------------------
+    # SHAP drivers (heuristic fallback when SHAP is unavailable)
+    # ------------------------------------------------------------------
+    def get_shap_drivers(self, record: dict, top_n: int = 3) -> list:
+        """Return top-N feature drivers as a list of dicts.
+
+        If SHAP is available and the fraud model is loaded, use TreeExplainer.
+        Otherwise return a heuristic ranking based on feature values.
+        """
+        try:
+            import shap
+            if self.fraud_model is None:
+                raise ValueError("Fraud model not loaded")
+            features = []
+            for f in self.fraud_features:
+                if f == "merchant_category_encoded":
+                    features.append(
+                        {"Retail": 0, "SaaS": 1, "B2B": 2, "Food": 3}.get(
+                            record.get("merchant_category", "Retail"), 0
+                        )
+                    )
+                else:
+                    features.append(record.get(f, 0))
+            explainer = shap.TreeExplainer(self.fraud_model)
+            sv = explainer.shap_values([features])
+            if isinstance(sv, list):
+                sv = sv[1][0]
+            # Pair with feature names and sort by absolute impact
+            paired = list(zip(self.fraud_features, sv))
+            paired.sort(key=lambda x: abs(x[1]), reverse=True)
+            return [
+                {"feature": f, "impact": round(float(v), 4)}
+                for f, v in paired[:top_n]
+            ]
+        except Exception:
+            # Heuristic fallback
+            drivers = []
+            amt = record.get("TransactionAmt", 0)
+            velocity = record.get("velocity_24h", 0)
+            hour = record.get("hour_of_day", 12)
+            if amt > 50000:
+                drivers.append({"feature": "TransactionAmt", "impact": 0.3})
+            if velocity > 5:
+                drivers.append({"feature": "velocity_24h", "impact": 0.25})
+            if hour < 6 or hour > 22:
+                drivers.append({"feature": "hour_of_day", "impact": 0.2})
+            return drivers[:top_n]
 
     # ------------------------------------------------------------------
     # Fraud probability

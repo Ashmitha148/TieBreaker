@@ -1,1 +1,0 @@
-"""TieBreaker backend test package."""

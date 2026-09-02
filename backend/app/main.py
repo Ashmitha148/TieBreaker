@@ -77,7 +77,7 @@ app.add_middleware(SlowAPIMiddleware)
 _PRODUCTION_ALLOWED_ORIGINS = ["https://tie-breaker-pi.vercel.app"]
 
 if settings.ENVIRONMENT == "production":
-    configured = list(settings.BACKEND_CORS_ORIGINS)
+    configured = settings.get_cors_origins()
     if configured != _PRODUCTION_ALLOWED_ORIGINS:
         logger.warning(
             "BACKEND_CORS_ORIGINS in production was %r — overriding to the "
@@ -88,7 +88,7 @@ if settings.ENVIRONMENT == "production":
         )
     cors_origins = _PRODUCTION_ALLOWED_ORIGINS
 else:
-    cors_origins = settings.BACKEND_CORS_ORIGINS
+    cors_origins = settings.get_cors_origins()
 
 app.add_middleware(
     CORSMiddleware,
