@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -17,7 +17,8 @@ def list_orders(db: Session = Depends(get_db)):
     return orders
 
 
-@router.post("/create-order")
+@router.post("/orders", status_code=201)
+@router.post("/create-order", status_code=201)
 def create_new_order(order_in: OrderCreate, db: Session = Depends(get_db)):
     """
     Create a Razorpay order, run ML fraud/FP prediction, and return
@@ -105,6 +106,7 @@ def create_new_order(order_in: OrderCreate, db: Session = Depends(get_db)):
 
     return {
         "order_id": rzp_order["id"],
+        "razorpay_order_id": rzp_order["id"],
         "decision": recommended_action,
         "fraud_prob": fraud_prob,
         "fp_prob": fp_prob,

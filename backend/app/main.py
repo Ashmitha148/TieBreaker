@@ -114,6 +114,17 @@ app.include_router(whatif.router, prefix="/api")
 app.include_router(learning.router, prefix="/api")
 
 
+@app.get("/", tags=["Root"])
+def root():
+    return {
+        "status": "ready",
+        "project": "TieBreaker",
+        "service": "tiebreaker",
+        "version": "2.0.0",
+        "phase": "production",
+    }
+
+
 @app.get("/health", tags=["Health"])
 def health_check():
     from .ml.predictor import get_model_health

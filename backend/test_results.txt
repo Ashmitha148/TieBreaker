@@ -1,0 +1,52 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.7, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\HP\TieBreaker\backend
+plugins: anyio-4.14.2
+collected 43 items
+
+tests/test_api.py::test_health PASSED                                    [  2%]
+tests/test_api.py::test_root PASSED                                      [  4%]
+tests/test_api.py::test_config_endpoint PASSED                           [  6%]
+tests/test_api.py::test_transactions_list PASSED                         [  9%]
+tests/test_api.py::test_queue_endpoint PASSED                            [ 11%]
+tests/test_api.py::test_metrics_endpoint PASSED                          [ 13%]
+tests/test_api.py::test_insights_endpoint PASSED                         [ 16%]
+tests/test_api.py::test_audit_endpoint PASSED                            [ 18%]
+tests/test_api.py::test_override_endpoint PASSED                         [ 20%]
+tests/test_auth_decisioning.py::test_decision_requires_api_key_when_configured PASSED [ 23%]
+tests/test_auth_decisioning.py::test_what_if_single_override_does_not_require_both PASSED [ 25%]
+tests/test_auth_decisioning.py::test_webhook_does_not_require_api_key PASSED [ 27%]
+tests/test_auth_decisioning.py::test_production_refuses_unconfigured_api_key PASSED [ 30%]
+tests/test_config.py::test_public_config_endpoint_does_not_leak_secrets PASSED [ 32%]
+tests/test_decisions.py::test_cost_engine_allow_low_risk PASSED          [ 34%]
+tests/test_decisions.py::test_cost_engine_block_high_risk PASSED         [ 37%]
+tests/test_decisions.py::test_cost_engine_counterintuitive PASSED        [ 39%]
+tests/test_decisions.py::test_cost_engine_savings_positive PASSED        [ 41%]
+tests/test_decisions.py::test_threshold_baseline PASSED                  [ 44%]
+tests/test_decisions.py::test_api_transaction_detail PASSED              [ 46%]
+tests/test_decisions.py::test_api_counterintuitive_demo PASSED           [ 48%]
+tests/test_health.py::test_health_check_returns_200 PASSED               [ 51%]
+tests/test_health.py::test_root_returns_200 PASSED                       [ 53%]
+tests/test_orders.py::test_create_order_unconfigured_returns_503 PASSED  [ 55%]
+tests/test_orders.py::test_create_order_invalid_amount_returns_422 PASSED [ 58%]
+tests/test_orders.py::test_create_order_missing_amount_returns_422 PASSED [ 60%]
+tests/test_orders.py::test_create_order_success_with_mocked_razorpay_client PASSED [ 62%]
+tests/test_orders.py::test_list_orders PASSED                            [ 65%]
+tests/test_payments.py::test_list_payments_returns_persisted_records PASSED [ 67%]
+tests/test_payments.py::test_verify_checkout_payment_unconfigured_returns_503 PASSED [ 69%]
+tests/test_payments.py::test_verify_checkout_missing_fields_returns_422 PASSED [ 72%]
+tests/test_payments.py::test_verify_checkout_payment_valid_signature PASSED [ 74%]
+tests/test_payments.py::test_verify_checkout_payment_invalid_signature PASSED [ 76%]
+tests/test_webhooks.py::test_webhook_missing_signature_returns_400 PASSED [ 79%]
+tests/test_webhooks.py::test_webhook_invalid_signature_returns_400 PASSED [ 81%]
+tests/test_webhooks.py::test_webhook_empty_body_returns_400 PASSED       [ 83%]
+tests/test_webhooks.py::test_webhook_malformed_json_returns_400 PASSED   [ 86%]
+tests/test_webhooks.py::test_webhook_missing_event_id_returns_400 PASSED [ 88%]
+tests/test_webhooks.py::test_webhook_valid_signature_and_processing PASSED [ 90%]
+tests/test_webhooks.py::test_webhook_payment_authorized_handling PASSED  [ 93%]
+tests/test_webhooks.py::test_webhook_idempotency_duplicate_ignored PASSED [ 95%]
+tests/test_webhooks.py::test_webhook_payment_failed_persists_error_details PASSED [ 97%]
+tests/test_webhooks.py::test_webhook_event_order_tolerance PASSED        [100%]
+
+====================== 43 passed, 26 warnings in 12.71s =======================
+

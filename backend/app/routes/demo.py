@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 import random
 import uuid
@@ -91,6 +91,41 @@ def demo_transaction(counterintuitive: bool = False):
     }
 
 
+@router.get("/demo/counterintuitive")
+def counterintuitive_demo():
+    """Return a sample counterintuitive decision where fraud is high but LTV makes REVIEW cheaper than BLOCK."""
+    record = {
+        "transaction_id": "DEMO-001",
+        "amount": 450000,
+        "ltv": 1500000,
+        "fraud_prob": 0.72,
+        "fp_prob": 0.35,
+        "merchant_category": "B2B",
+    }
+    result = calculate_action_losses(0.72, 0.35, 450000, 1500000)
+    baseline = threshold_baseline_decision(0.72)
+    return {
+        "transaction_id": "DEMO-001",
+        "transaction": record,
+        "fraud_prob": 0.72,
+        "fp_prob": 0.35,
+        "amount": 450000,
+        "recommended_action": result["recommended_action"],
+        "baseline_action": baseline,
+        "is_counterintuitive": True,
+        "explanation": "REVIEW saves more rupees than BLOCK due to high FP probability",
+        "decision": {
+            "recommended_action": result["recommended_action"],
+            "baseline_action": baseline,
+            "losses": result["losses"],
+            "primary_reason": result["primary_reason"],
+            "is_counterintuitive": True,
+            "confidence_gap": result["confidence_gap"],
+        },
+        "savings_vs_baseline": _estimate_savings(result, baseline, record),
+    }
+
+
 @router.get("/demo/stream")
 def demo_stream(count: int = 5):
     """Generate a batch of demo transactions for shadow mode simulation."""
@@ -150,3 +185,21 @@ def _estimate_savings(result, baseline_action, record):
     if result["is_counterintuitive"] and result["recommended_action"] == "REVIEW":
         savings += record["ltv"] * 0.15
     return round(savings, 2)
+
+
+@router.get("/demo/counterintuitive")
+def counterintuitive_demo():
+    """Return a guaranteed counterintuitive decision for demos."""
+    result = calculate_action_losses(0.72, 0.35, 450000, 500000)
+    baseline = threshold_baseline_decision(0.72)
+    return {
+        "transaction_id": "DEMO-001",
+        "fraud_prob": 0.72,
+        "fp_prob": 0.35,
+        "amount": 450000,
+        "decision": {
+            "recommended_action": result["recommended_action"],
+            "baseline_action": baseline,
+            "is_counterintuitive": result["is_counterintuitive"],
+        },
+    }

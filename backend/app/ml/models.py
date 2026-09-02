@@ -118,55 +118,38 @@ class ModelManager:
     # Version info
     # ------------------------------------------------------------------
     def current_version_info(self) -> dict:
-        """Return metadata about the currently loaded model artifacts."""
-        return self._version_info
+        return {
+            "version": "gbc-fraud-v2",
+            "fraud_threshold": self.fraud_threshold,
+            "fp_threshold": self.fp_threshold,
+        }
 
-    # ------------------------------------------------------------------
-    # SHAP drivers (heuristic fallback when SHAP is unavailable)
-    # ------------------------------------------------------------------
     def get_shap_drivers(self, record: dict, top_n: int = 3) -> list:
-        """Return top-N feature drivers as a list of dicts.
-
-        If SHAP is available and the fraud model is loaded, use TreeExplainer.
-        Otherwise return a heuristic ranking based on feature values.
-        """
         try:
             import shap
             if self.fraud_model is None:
-                raise ValueError("Fraud model not loaded")
-            features = []
-            for f in self.fraud_features:
-                if f == "merchant_category_encoded":
-                    features.append(
-                        {"Retail": 0, "SaaS": 1, "B2B": 2, "Food": 3}.get(
-                            record.get("merchant_category", "Retail"), 0
-                        )
-                    )
-                else:
-                    features.append(record.get(f, 0))
+                raise RuntimeError("Fraud model not loaded")
             explainer = shap.TreeExplainer(self.fraud_model)
+            features = _extract_features(record, self.fraud_features)
             sv = explainer.shap_values([features])
             if isinstance(sv, list):
                 sv = sv[1][0]
-            # Pair with feature names and sort by absolute impact
-            paired = list(zip(self.fraud_features, sv))
-            paired.sort(key=lambda x: abs(x[1]), reverse=True)
-            return [
-                {"feature": f, "impact": round(float(v), 4)}
-                for f, v in paired[:top_n]
-            ]
+            pairs = list(zip(self.fraud_features, sv))
+            pairs.sort(key=lambda x: abs(x[1]), reverse=True)
+            return [{"feature": f, "impact": round(float(i), 4)} for f, i in pairs[:top_n]]
         except Exception:
-            # Heuristic fallback
+            # Heuristic fallback — NEVER crash the API for explainability
             drivers = []
-            amt = record.get("TransactionAmt", 0)
-            velocity = record.get("velocity_24h", 0)
-            hour = record.get("hour_of_day", 12)
-            if amt > 50000:
-                drivers.append({"feature": "TransactionAmt", "impact": 0.3})
-            if velocity > 5:
-                drivers.append({"feature": "velocity_24h", "impact": 0.25})
-            if hour < 6 or hour > 22:
-                drivers.append({"feature": "hour_of_day", "impact": 0.2})
+            if record.get("velocity_1h", 0) > 3:
+                drivers.append({"feature": "velocity_1h", "impact": 0.25})
+            if record.get("TransactionAmt", 0) > 50000:
+                drivers.append({"feature": "TransactionAmt", "impact": 0.20})
+            if record.get("hour_of_day", 12) < 6:
+                drivers.append({"feature": "hour_of_day", "impact": 0.15})
+            if record.get("geo_mismatch_flag", 0) == 1:
+                drivers.append({"feature": "geo_mismatch_flag", "impact": 0.10})
+            if record.get("device_change_flag", 0) == 1:
+                drivers.append({"feature": "device_change_flag", "impact": 0.08})
             return drivers[:top_n]
 
     # ------------------------------------------------------------------

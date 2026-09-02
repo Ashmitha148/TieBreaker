@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import json
 import os
@@ -5,7 +6,7 @@ import os
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=[".env", "../.env"],
         case_sensitive=True,
         extra="ignore",
     )
@@ -13,7 +14,16 @@ class Settings(BaseSettings):
     APP_NAME: str = "TieBreaker"
     ENVIRONMENT: str = "development"
     DEBUG: bool = True
-    DATABASE_URL: str = "postgresql+psycopg2://tiebreaker:tiebreaker@localhost:5432/tiebreaker"
+
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def parse_debug(cls, v):
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            return v.lower() in ("true", "1", "yes", "on", "t", "debug")
+        return bool(v)
+    DATABASE_URL: str = "sqlite:///./tiebreaker.db"
     RAZORPAY_KEY_ID: str = ""
     RAZORPAY_KEY_SECRET: str = ""
     RAZORPAY_WEBHOOK_SECRET: str = ""
