@@ -41,22 +41,30 @@ async def lifespan(app: FastAPI):
         loop = asyncio.get_event_loop()
         loop.run_in_executor(None, ensure_models_trained)
     else:
-        mgr = get_model_manager()
-        fraud_loaded = mgr.fraud_model is not None
-        fp_loaded = mgr.fp_model is not None
+        try:
+            mgr = get_model_manager()
+            fraud_loaded = mgr.fraud_model is not None
+            fp_loaded = mgr.fp_model is not None
 
-        if not fraud_loaded or not fp_loaded:
-            logger.error(
-                "CRITICAL: Required ML artifacts are missing in production."
-            )
-            raise RuntimeError(
-                "Required ML artifacts are missing in production."
-            )
-
-        app.state.ml_degraded = False
-        logger.info(
-            f"Production ML check passed: fraud={fraud_loaded}, fp={fp_loaded}"
-        )
+            if not fraud_loaded or not fp_loaded:
+                logger.error(
+                    "CRITICAL: Required ML artifacts are missing in production. "
+                    "fraud_loaded=%s fp_loaded=%s",
+                    fraud_loaded,
+                    fp_loaded,
+                )
+                app.state.ml_degraded = True
+            else:
+                app.state.ml_degraded = False
+                logger.info(
+                    "Production ML check passed: fraud=%s fp=%s version=%s",
+                    fraud_loaded,
+                    fp_loaded,
+                    mgr.current_version_info().get("version", "unknown"),
+                )
+        except Exception as exc:
+            logger.exception("ML model loading failed in production: %s", exc)
+            app.state.ml_degraded = True
 
     yield
 
@@ -130,8 +138,18 @@ def health_check():
     from .ml.predictor import get_model_health
     from .services.velocity_engine import get_velocity_engine
 
-    ml_health = get_model_health()
-    vel_engine = get_velocity_engine(fail_silent=True)
+    try:
+        ml_health = get_model_health()
+    except Exception as exc:
+        logger.warning("get_model_health failed: %s", exc)
+        ml_health = {"fraud_model_loaded": False, "fp_model_loaded": False, "error": str(exc)}
+
+    try:
+        vel_engine = get_velocity_engine(fail_silent=True)
+        redis_ok = vel_engine.client is not None
+    except Exception as exc:
+        logger.warning("Velocity engine check failed: %s", exc)
+        redis_ok = False
 
     status = "ok"
     degraded_reasons = []
@@ -140,7 +158,6 @@ def health_check():
         status = "degraded"
         degraded_reasons.append("ml_artifacts_missing")
 
-    redis_ok = vel_engine.client is not None
     if not redis_ok:
         status = "degraded"
         degraded_reasons.append("redis_unavailable")
