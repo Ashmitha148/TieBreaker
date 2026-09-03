@@ -17,7 +17,6 @@ Usage (after configuring Kaggle API credentials):
 Or download manually from:
     https://www.kaggle.com/c/ieee-fraud-detection/data
 """
-import os
 import sys
 from pathlib import Path
 

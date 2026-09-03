@@ -7,6 +7,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Header, HTTPException, BackgroundTasks, Request
 from sqlalchemy.orm import Session
 
+from ..auth import verify_api_key
 from ..database import get_db, SessionLocal
 from ..models import WebhookEvent, Payment, Order, Decision
 from ..config import settings
@@ -200,13 +201,24 @@ def verify_webhook_signature(payload_body: bytes, signature: str, secret: str) -
 
 
 @router.get("/webhooks", tags=["Webhooks"])
-def list_webhooks(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def list_webhooks(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    _api_key: str = Depends(verify_api_key),
+):
+    """List webhook events. Requires X-API-Key."""
     events = db.query(WebhookEvent).order_by(WebhookEvent.created_at.desc()).offset(skip).limit(limit).all()
     return {"events": events, "total": db.query(WebhookEvent).count(), "skip": skip, "limit": limit}
 
 
 @router.get("/webhooks/{event_id}", tags=["Webhooks"])
-def get_webhook_event(event_id: str, db: Session = Depends(get_db)):
+def get_webhook_event(
+    event_id: str,
+    db: Session = Depends(get_db),
+    _api_key: str = Depends(verify_api_key),
+):
+    """Get a webhook event. Requires X-API-Key."""
     event = db.query(WebhookEvent).filter(WebhookEvent.event_id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Webhook event not found")

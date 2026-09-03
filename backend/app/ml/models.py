@@ -3,47 +3,16 @@ import logging
 from pathlib import Path
 
 import joblib
-import numpy as np
+
+from .data import FRAUD_FEATURES, FP_FEATURES
 
 logger = logging.getLogger(__name__)
 
 ARTIFACTS_DIR = Path(__file__).parent / "artifacts"
 
-# Feature lists (defined here to avoid circular import with predictor.py)
-FRAUD_FEATURES = [
-    "TransactionAmt", "card1", "card2", "card3", "card5",
-    "addr1", "addr2", "dist1", "dist2",
-    "C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C10",
-    "C11", "C12", "C13", "C14",
-    "D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10",
-    "D11", "D12", "D13", "D14", "D15",
-    "M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8", "M9",
-    "V1", "V2", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10",
-    "V11", "V12", "V13", "V14", "V15", "V16", "V17", "V18", "V19", "V20",
-    "V21", "V22", "V23", "V24", "V25", "V26", "V27", "V28", "V29", "V30",
-    "V31", "V32", "V33", "V34", "V35", "V36", "V37", "V38", "V39", "V40",
-    "V41", "V42", "V43", "V44", "V45", "V46", "V47", "V48", "V49", "V50",
-    "V51", "V52", "V53", "V54", "V55", "V56", "V57", "V58", "V59", "V60",
-    "V61", "V62", "V63", "V64", "V65", "V66", "V67", "V68", "V69", "V70",
-    "V71", "V72", "V73", "V74", "V75", "V76", "V77", "V78", "V79", "V80",
-    "V81", "V82", "V83", "V84", "V85", "V86", "V87", "V88", "V89", "V90",
-    "V91", "V92", "V93", "V94", "V95", "V96", "V97", "V98", "V99", "V100",
-    "hour_of_day", "day_of_week", "device_change_flag", "geo_mismatch_flag",
-    "is_cross_border", "customer_tenure_days", "customer_tx_count_30d",
-    "customer_refund_rate", "velocity_1h", "velocity_24h",
-]
-
-FP_FEATURES = [
-    "TransactionAmt", "card1", "card2", "card3", "card5",
-    "addr1", "addr2",
-    "C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C10",
-    "C11", "C12", "C13", "C14",
-    "D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10",
-    "D11", "D12", "D13", "D14", "D15",
-    "hour_of_day", "day_of_week", "device_change_flag",
-    "customer_tenure_days", "customer_tx_count_30d", "customer_refund_rate",
-    "velocity_1h", "velocity_24h",
-]
+# Feature lists are imported from data.py (single source of truth, kept in
+# sync with the training pipeline). The artifact's own ``features`` key
+# always takes precedence at load time — these are fallbacks only.
 
 try:
     from sklearn.ensemble import GradientBoostingClassifier

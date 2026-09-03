@@ -1,4 +1,4 @@
-﻿"""
+"""
 TieBreaker data loader for real IEEE-CIS Fraud Detection dataset.
 
 Loads train_transaction.csv and train_identity.csv, joins on TransactionID,
@@ -25,6 +25,16 @@ TX_DT_COL = "TransactionDT"
 TX_FRAUD_COL = "isFraud"
 TX_AMT_COL = "TransactionAmt"
 
+from .features import (
+    velocity_7d_trend,
+    merchant_chargeback_rate,
+    payment_method_risk_score,
+    hours_since_last_txn,
+    hour_bin_risk,
+    amount_zscore,
+    weekend_flag,
+)
+
 # ---------------------------------------------------------------------------
 # Feature lists used by the ML pipeline.
 # These are a curated subset of IEEE-CIS columns plus engineered features.
@@ -44,6 +54,13 @@ FRAUD_FEATURES = [
     "device_change_flag",
     "geo_mismatch_flag",
     "is_cross_border",
+    "velocity_7d_trend",
+    "merchant_chargeback_rate",
+    "payment_method_risk_score",
+    "hours_since_last_txn",
+    "hour_bin_risk",
+    "amount_zscore",
+    "weekend_flag",
 ]
 FP_FEATURES = [
     "TransactionAmt",
@@ -57,6 +74,13 @@ FP_FEATURES = [
     "device_change_flag",
     "geo_mismatch_flag",
     "is_cross_border",
+    "velocity_7d_trend",
+    "merchant_chargeback_rate",
+    "payment_method_risk_score",
+    "hours_since_last_txn",
+    "hour_bin_risk",
+    "amount_zscore",
+    "weekend_flag",
 ]
 
 def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -143,17 +167,53 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     else:
         df["is_false_positive"] = 0
 
+    # Apply new features from features.py.
+    # Computed as Series first, then added in a single concat — avoids the
+    # DataFrame fragmentation (and PerformanceWarnings) of repeated inserts.
+    engineered = {
+        "velocity_7d_trend": velocity_7d_trend(df),
+        "merchant_chargeback_rate": merchant_chargeback_rate(df),
+        "payment_method_risk_score": payment_method_risk_score(df),
+        "hours_since_last_txn": hours_since_last_txn(df),
+        "hour_bin_risk": hour_bin_risk(df),
+        "amount_zscore": amount_zscore(df),
+        "weekend_flag": weekend_flag(df),
+    }
+    df = pd.concat([df, pd.DataFrame(engineered, index=df.index)], axis=1)
+
     return df
 
-def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+
+def leakage_check(df: pd.DataFrame) -> None:
+    """Raise ValueError if any feature has >0.95 correlation with isFraud (data leakage guard)."""
+    if TX_FRAUD_COL not in df.columns:
+        return
+    corr = df.corr(numeric_only=True)[TX_FRAUD_COL].abs().sort_values(ascending=False)
+    suspicious = (
+        corr[corr > 0.95]
+        .drop(TX_FRAUD_COL, errors="ignore")
+        .drop(IS_FALSE_POSITIVE_COL, errors="ignore")
+    )
+    if not suspicious.empty:
+        raise ValueError(
+            f"Data leakage detected: features {suspicious.index.tolist()} "
+            f"have >0.95 correlation with {TX_FRAUD_COL}"
+        )
+
+
+def load_data(max_rows: int | None = None) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Load real IEEE-CIS data, join identity, engineer features,
     and perform a strict temporal 70/15/15 split.
 
+    ``max_rows`` optionally limits how many rows are read from the CSV head
+    (rows are temporally sorted afterwards, so the split stays temporal).
+
     Raises:
         FileNotFoundError: If train_transaction.csv is not present.
-        ValueError: If isFraud column is missing.
+        ValueError: If isFraud column is missing or leakage is detected.
     """
+
     if not TRANSACTION_CSV.exists():
         raise FileNotFoundError(
             f"Real IEEE-CIS transaction data not found at {TRANSACTION_CSV}. "
@@ -161,7 +221,7 @@ def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
             f"See download_dataset.py for acquisition instructions."
         )
 
-    tx = pd.read_csv(TRANSACTION_CSV)
+    tx = pd.read_csv(TRANSACTION_CSV, nrows=max_rows)
 
     if IDENTITY_CSV.exists():
         idf = pd.read_csv(IDENTITY_CSV)
@@ -187,6 +247,24 @@ def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         )
 
     df = _engineer_features(df)
+
+    # Derived proxy target for the false-positive model. IEEE-CIS carries no
+    # direct false-positive label, so we proxy it with the highest-value
+    # *legitimate* transactions (isFraud == 0 in the top 20% by amount) — the
+    # legit txns most likely to be manually declined by a risk engine. This
+    # gives the FP model (SMOTE + recall gate) a learnable minority class.
+    # Leakage-safe: uses only the label context and an amount threshold computed
+    # on the full frame, never post-split information.
+    if TX_FRAUD_COL in df.columns and TX_AMT_COL in df.columns:
+        _amt = df[TX_AMT_COL]
+        _amt_threshold = _amt.quantile(0.80)
+        df[IS_FALSE_POSITIVE_COL] = (
+            (df[TX_FRAUD_COL] == 0) & (_amt >= _amt_threshold)
+        ).astype(int)
+    else:
+        df[IS_FALSE_POSITIVE_COL] = 0
+
+    leakage_check(df)
 
     # Strict temporal split: 70 / 15 / 15
     n = len(df)

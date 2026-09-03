@@ -109,3 +109,24 @@ class AuditLog(Base):
     details = Column(Text, nullable=True)
     model_version = Column(String(64), nullable=True)
     config_version = Column(String(20), nullable=True)
+
+
+class ShadowPrediction(Base):
+    """Monitoring-only shadow-model comparisons.
+
+    Populated by ``POST /api/shadow-score``. The shadow score NEVER feeds back
+    into the primary fraud decision — it is persisted purely so
+    ``GET /api/shadow-comparison`` can report drift between the deployed and
+    candidate models.
+    """
+    __tablename__ = "shadow_predictions"
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    transaction_id = Column(String(100), index=True, nullable=True)
+    primary_score = Column(Float, nullable=False)
+    shadow_score = Column(Float, nullable=True)
+    delta = Column(Float, nullable=True)
+    recommended_action = Column(String(20), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+# noqa sentinel — keep AuditLog the last class for diff readability

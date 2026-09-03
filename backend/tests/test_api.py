@@ -1,5 +1,4 @@
-﻿from backend.app.main import app
-
+﻿
 def test_health(client):
     # FIXED: real endpoint returns "ok" or "degraded" (never "healthy") --
     # "degraded" is a correct, honest response when Redis/ML aren't

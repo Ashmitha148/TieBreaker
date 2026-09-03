@@ -14,8 +14,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 RUN mkdir -p app/ml/artifacts
 
-# DEBUG: verify model artifacts are actually in the image
-RUN ls -la app/ml/artifacts/ || echo "WARNING: No artifacts found"
+# Build-time guard: production requires the ML artifacts to be baked into the image.
+RUN test -f app/ml/artifacts/fraud_model.joblib \
+    && test -f app/ml/artifacts/fp_model.joblib \
+    || (echo "ERROR: required ML artifacts missing from app/ml/artifacts/" && exit 1)
 
 EXPOSE 8000
 

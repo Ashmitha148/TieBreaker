@@ -1,5 +1,4 @@
-﻿from backend.app.main import app
-from backend.app.services.strike_selector import calculate_action_losses, threshold_baseline_decision
+﻿from backend.app.services.strike_selector import calculate_action_losses, threshold_baseline_decision
 
 def test_cost_engine_allow_low_risk(client):
     # Very low fraud, low amount, high LTV â†’ should favor ALLOW or VERIFY

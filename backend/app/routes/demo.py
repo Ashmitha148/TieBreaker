@@ -4,6 +4,7 @@ import random
 import uuid
 from datetime import datetime
 
+from ..auth import verify_api_key
 from ..database import get_db
 from ..ml.predictor import predict_transaction
 from ..services.strike_selector import calculate_action_losses, threshold_baseline_decision
@@ -139,8 +140,12 @@ def demo_stream(count: int = 5):
 
 
 @router.post("/demo/seed-decisions")
-def seed_demo_decisions(db: Session = Depends(get_db), count: int = 20):
-    """Pre-populate the DB with realistic demo decisions for the queue/audit pages."""
+def seed_demo_decisions(
+    db: Session = Depends(get_db),
+    count: int = 20,
+    _api_key: str = Depends(verify_api_key),
+):
+    """Pre-populate the DB with realistic demo decisions. Requires X-API-Key (DB write)."""
     if count > 100:
         count = 100
 
@@ -185,21 +190,3 @@ def _estimate_savings(result, baseline_action, record):
     if result["is_counterintuitive"] and result["recommended_action"] == "REVIEW":
         savings += record["ltv"] * 0.15
     return round(savings, 2)
-
-
-@router.get("/demo/counterintuitive")
-def counterintuitive_demo():
-    """Return a guaranteed counterintuitive decision for demos."""
-    result = calculate_action_losses(0.72, 0.35, 450000, 500000)
-    baseline = threshold_baseline_decision(0.72)
-    return {
-        "transaction_id": "DEMO-001",
-        "fraud_prob": 0.72,
-        "fp_prob": 0.35,
-        "amount": 450000,
-        "decision": {
-            "recommended_action": result["recommended_action"],
-            "baseline_action": baseline,
-            "is_counterintuitive": result["is_counterintuitive"],
-        },
-    }

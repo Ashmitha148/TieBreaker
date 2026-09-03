@@ -8,10 +8,11 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
-from .database import engine, Base
 from .routes import orders, payments, webhooks
 from .routes import transactions, metrics, demo, queue, insights, audit, config as config_route
 from .routes import cost_config, stream, whatif, learning
+from .routes import shadow
+
 from .startup import ensure_models_trained
 from .config import settings
 from .rate_limit import limiter
@@ -34,7 +35,22 @@ async def lifespan(app: FastAPI):
     from pathlib import Path
     alembic_ini = Path(__file__).parent.parent / "alembic.ini"
     alembic_cfg = Config(str(alembic_ini))
-    command.upgrade(alembic_cfg, "head")
+    try:
+        command.upgrade(alembic_cfg, "head")
+    except Exception as exc:
+        # Legacy databases created via Base.metadata.create_all have tables but
+        # no alembic_version row; re-running 0001 then collides ("table already
+        # exists"). Stamp head so the baseline is recorded and startup proceeds;
+        # future schema changes will be managed by Alembic migrations.
+        if "already exists" in str(exc).lower():
+            logger.warning(
+                "Pre-Alembic database detected (%s); stamping alembic head. "
+                "Future schema changes will be managed by Alembic migrations.",
+                exc,
+            )
+            command.stamp(alembic_cfg, "head")
+        else:
+            raise
 
     # Train models in background in dev; in production, validate artifacts exist
     if settings.ENVIRONMENT == "development":
@@ -120,6 +136,7 @@ app.include_router(cost_config.router, prefix="/api")
 app.include_router(stream.router, prefix="/api")
 app.include_router(whatif.router, prefix="/api")
 app.include_router(learning.router, prefix="/api")
+app.include_router(shadow.router, prefix="/api")
 
 
 @app.get("/", tags=["Root"])

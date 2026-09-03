@@ -195,8 +195,8 @@ def create_transaction(
 
 
 @router.get("/transactions")
-def list_transactions(db: Session = Depends(get_db)):
-    """List recent transactions (decisions)."""
+def list_transactions(db: Session = Depends(get_db), _api_key: str = Depends(verify_api_key)):
+    """List recent transactions (decisions). Requires X-API-Key."""
     decisions = db.query(Decision).order_by(Decision.created_at.desc()).limit(100).all()
     if not decisions:
         seed = Decision(
@@ -236,6 +236,7 @@ def list_transactions(db: Session = Depends(get_db)):
 def get_transaction(
     transaction_id: str,
     db: Session = Depends(get_db),
+    _api_key: str = Depends(verify_api_key),
 ):
     decision = db.query(Decision).filter(Decision.transaction_id == transaction_id).first()
     if not decision and transaction_id == "TXN-COUNTER-001":
@@ -345,7 +346,9 @@ def override_transaction(
     transaction_id: str,
     payload: OverrideRequest,
     db: Session = Depends(get_db),
+    _api_key: str = Depends(verify_api_key),
 ):
+    """Override a decision. Requires X-API-Key (mutation + audit write)."""
     valid_actions = ["ALLOW", "VERIFY", "REVIEW", "BLOCK"]
     if payload.action not in valid_actions:
         raise HTTPException(status_code=400, detail=f"Invalid action. Must be one of {valid_actions}")
@@ -406,7 +409,11 @@ def override_transaction(
 
 
 @router.get("/transactions/{transaction_id}/shap-chart")
-def get_shap_chart(transaction_id: str, db: Session = Depends(get_db)):
+def get_shap_chart(
+    transaction_id: str,
+    db: Session = Depends(get_db),
+    _api_key: str = Depends(verify_api_key),
+):
     import io
     import base64
     import matplotlib

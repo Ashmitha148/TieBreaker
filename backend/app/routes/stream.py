@@ -1,10 +1,8 @@
 import json
 import asyncio
 from datetime import datetime
-from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
 from ..database import get_db

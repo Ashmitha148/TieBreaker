@@ -5,7 +5,7 @@ that routes and services actually call.
 """
 
 from typing import List, Dict, Any
-from ..ml.models import get_model_manager, ModelManager
+from ..ml.models import get_model_manager
 
 
 def predict_transaction(record: Dict[str, Any]) -> Dict[str, Any]:

@@ -1,0 +1,10 @@
+# Ruff configuration for TieBreaker
+# Keep the default high-signal rule set (E4/E7/E9/F).
+# Notebooks are research artifacts, not shipped code — exclude them.
+target-version = "py312"
+exclude = [
+    ".venv",
+    "__pycache__",
+    "node_modules",
+    "*.ipynb",
+]

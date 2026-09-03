@@ -1,5 +1,4 @@
 from backend.app.config import settings
-from backend.app.main import app
 
 
 def test_decision_requires_api_key_when_configured(client, monkeypatch):

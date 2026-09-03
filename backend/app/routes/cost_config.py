@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import Dict
 
+from ..auth import verify_api_key
 from ..database import get_db
 from ..models import ConfigHistory
 from ..services.strike_selector import DEFAULT_CONFIG
@@ -32,8 +33,12 @@ def get_cost_config(db: Session = Depends(get_db)):
 
 
 @router.put("/cost-config")
-def update_cost_config(config: Dict[str, float], db: Session = Depends(get_db)):
-    """Update cost configuration. Validates keys and creates audit history."""
+def update_cost_config(
+    config: Dict[str, float],
+    db: Session = Depends(get_db),
+    _api_key: str = Depends(verify_api_key),
+):
+    """Update cost configuration. Requires X-API-Key. Validates keys and creates audit history."""
     valid_keys = set(DEFAULT_CONFIG.keys())
     incoming_keys = set(config.keys())
 
