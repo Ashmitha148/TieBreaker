@@ -16,7 +16,10 @@ from app.database import Base
 config = context.config
 
 # Override sqlalchemy.url with the real DATABASE_URL from your app settings
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+_alembic_db_url = settings.DATABASE_URL
+if _alembic_db_url.startswith("postgres://"):
+    _alembic_db_url = _alembic_db_url.replace("postgres://", "postgresql://", 1)
+config.set_main_option("sqlalchemy.url", _alembic_db_url)
 
 # Interpret the config file for Python logging
 if config.config_file_name is not None:
