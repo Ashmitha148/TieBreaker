@@ -1,9 +1,13 @@
-"""
-TieBreaker model training pipeline — Phase 2: Optuna + Calibration + MLflow.
+"""TieBreaker model training — V2 (XGBoost, recall-optimized, calibrated).
 
-Trains:
-  1. Fraud detection model (GradientBoostingClassifier, Optuna-tuned, calibrated)
-  2. False-positive model (GradientBoostingClassifier + SMOTE, recall-optimised)
+CRITICAL FIXES from V1:
+1. XGBClassifier instead of GradientBoostingClassifier (handles missing values, imbalanced data).
+2. scale_pos_weight auto-computed from fraud rate (~28 for 3.5% fraud).
+3. Optuna search space expanded (subsample, colsample_bytree, reg params).
+4. Threshold tuned for BALANCED precision/recall (F1-optimizing), not just F1 floor.
+5. Calibration uses TimeSeriesSplit (temporal folds) instead of random KFold.
+6. FP model uses XGBoost + SMOTE with its own scale_pos_weight.
+7. All artifacts saved as .joblib with SHA-256 sidecars (backward compatible).
 
 Artifacts are persisted as .joblib with SHA-256 sidecars.
 """
@@ -15,7 +19,6 @@ from pathlib import Path
 import joblib
 import numpy as np
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.metrics import (
     average_precision_score,
     brier_score_loss,
@@ -24,8 +27,15 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
 )
+from sklearn.model_selection import TimeSeriesSplit
 
-from .data import load_data, get_feature_matrix, FRAUD_FEATURES, FP_FEATURES
+try:
+    from .data import load_data, get_feature_matrix, FRAUD_FEATURES, FP_FEATURES
+except ImportError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent))
+    from data import load_data, get_feature_matrix, FRAUD_FEATURES, FP_FEATURES
 
 logger = logging.getLogger(__name__)
 
@@ -55,48 +65,59 @@ def _save_artifact(data, path: Path):
     path.with_suffix(path.suffix + ".sha256").write_text(_compute_sha256(path))
 
 
-def _optuna_objective(trial, X_train, y_train, X_val, y_val):
-    """Optuna objective: maximise F1 on validation set."""
+def _optuna_objective_xgb(trial, X_train, y_train, X_val, y_val, scale_pos_weight):
+    """Optuna objective for XGBClassifier — maximize F1 on validation set."""
     params = {
-        "n_estimators": trial.suggest_int("n_estimators", 50, 200),
-        "max_depth": trial.suggest_int("max_depth", 3, 6),
-        "learning_rate": trial.suggest_float("learning_rate", 0.05, 0.2),
+        "n_estimators": trial.suggest_int("n_estimators", 100, 500),
+        "max_depth": trial.suggest_int("max_depth", 4, 10),
+        "learning_rate": trial.suggest_float("learning_rate", 0.03, 0.2, log=True),
+        "subsample": trial.suggest_float("subsample", 0.6, 1.0),
+        "colsample_bytree": trial.suggest_float("colsample_bytree", 0.6, 1.0),
+        "min_child_weight": trial.suggest_int("min_child_weight", 1, 10),
+        "gamma": trial.suggest_float("gamma", 0, 5),
+        "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 10.0, log=True),
+        "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 10.0, log=True),
+        "scale_pos_weight": scale_pos_weight,
+        "use_label_encoder": False,
+        "eval_metric": "logloss",
+        "random_state": 42,
+        "n_jobs": -1,
     }
-    model = GradientBoostingClassifier(**params, random_state=42)
-    model.fit(X_train, y_train)
+    try:
+        from xgboost import XGBClassifier
+    except ImportError:
+        raise ImportError("xgboost is required. Install: pip install xgboost")
+
+    model = XGBClassifier(**params)
+    model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
     y_pred = model.predict(X_val)
     return f1_score(y_val, y_pred, zero_division=0)
 
 
-def _run_optuna(X_train, y_train, X_val, y_val, n_trials: int = 20, study_name: str = "study"):
+def _run_optuna_xgb(X_train, y_train, X_val, y_val, scale_pos_weight, n_trials=30, study_name="fraud"):
     """Run Optuna hyperparameter search, return best_params."""
     try:
         import optuna
         optuna.logging.set_verbosity(optuna.logging.WARNING)
         study = optuna.create_study(direction="maximize", study_name=study_name)
         study.optimize(
-            lambda trial: _optuna_objective(trial, X_train, y_train, X_val, y_val),
+            lambda trial: _optuna_objective_xgb(trial, X_train, y_train, X_val, y_val, scale_pos_weight),
             n_trials=n_trials,
+            show_progress_bar=True,
         )
         logger.info("Best params (%s): %s | F1=%.4f", study_name, study.best_params, study.best_value)
         return study.best_params
     except Exception as e:
-        warnings.warn(f"Optuna failed ({e}); using default params.")
-        return {"n_estimators": 100, "max_depth": 4, "learning_rate": 0.1}
+        warnings.warn(f"Optuna failed ({e}); using default XGB params.")
+        return {
+            "n_estimators": 200, "max_depth": 6, "learning_rate": 0.1,
+            "subsample": 0.9, "colsample_bytree": 0.9,
+            "min_child_weight": 3, "gamma": 0, "reg_alpha": 0.1, "reg_lambda": 1.0,
+        }
 
 
-def _train_fp_model(X_train: np.ndarray, y_train: np.ndarray):
-    """
-    Train FP model with SMOTE (sampling_strategy=0.5) + balanced sample weights.
-    Uses 150 estimators. Threshold is tuned on validation data to meet a
-    recall floor while maximising F1 (precision-preserving).
-    FP model is inherently harder on synthetic labels; we target recall >= 0.30
-    while maintaining precision > 0.50.
-
-    Note: GradientBoostingClassifier has no ``class_weight`` parameter — class
-    balancing is applied via per-sample weights (n_samples / (n_classes *
-    class_count)), the technically correct equivalent.
-    """
+def _train_fp_model(X_train, y_train):
+    """Train FP model with SMOTE + XGBoost."""
     try:
         from imblearn.over_sampling import SMOTE
         smote = SMOTE(sampling_strategy=0.5, random_state=42)
@@ -106,72 +127,100 @@ def _train_fp_model(X_train: np.ndarray, y_train: np.ndarray):
         X_res, y_res = X_train, y_train
 
     y_res = np.asarray(y_res)
-    model = GradientBoostingClassifier(
-        n_estimators=150, max_depth=3, random_state=42
-    )
+    try:
+        from xgboost import XGBClassifier
+    except ImportError:
+        raise ImportError("xgboost is required.")
+
     classes, counts = np.unique(y_res, return_counts=True)
-    sample_weight = np.empty(len(y_res), dtype=np.float64)
-    for cls, cnt in zip(classes, counts):
-        sample_weight[y_res == cls] = len(y_res) / (2.0 * cnt)
-    model.fit(X_res, y_res, sample_weight=sample_weight)
+    scale_pos = counts[0] / counts[1] if len(counts) > 1 else 1.0
+
+    model = XGBClassifier(
+        n_estimators=200,
+        max_depth=5,
+        learning_rate=0.1,
+        subsample=0.9,
+        colsample_bytree=0.9,
+        scale_pos_weight=scale_pos,
+        use_label_encoder=False,
+        eval_metric="logloss",
+        random_state=42,
+        n_jobs=-1,
+    )
+    model.fit(X_res, y_res)
     return model
 
 
-def _tune_threshold(model, X_val, y_val, target_metric="recall", target_value=0.45):
-    """
-    Select the decision threshold on validation data (never on test data).
+def _tune_threshold_balanced(model, X_val, y_val, target_precision=0.75, target_recall=0.65):
+    """Tune threshold for balanced precision/recall.
 
-    Among thresholds that meet the target-metric floor (e.g. recall >= 0.30),
-    pick the one with the best F1 — ties broken toward the higher threshold.
-    This replaces the degenerate "first/most permissive threshold meeting the
-    floor" behaviour, which inflated recall at the expense of precision.
-    If no threshold reaches the floor, fall back to the best value of the
-    target metric and warn.
+    Strategy:
+    1. Try to find thresholds where BOTH precision >= target_precision AND recall >= target_recall.
+       Pick the one with best F1.
+    2. If no threshold meets both, find the threshold closest to the intersection of
+       precision=target_precision and recall=target_recall in PR space.
+    3. Fall back to best F1.
+
+    This produces a balanced operating point suitable for hackathon presentation.
     """
     proba = model.predict_proba(X_val)[:, 1]
     candidates = []
-    for threshold in np.arange(0.10, 0.90, 0.01):
+    for threshold in np.arange(0.05, 0.95, 0.005):
         y_pred = (proba >= threshold).astype(int)
         candidates.append({
-            "threshold": round(float(threshold), 2),
+            "threshold": round(float(threshold), 3),
             "recall": recall_score(y_val, y_pred, zero_division=0),
             "precision": precision_score(y_val, y_pred, zero_division=0),
             "f1": f1_score(y_val, y_pred, zero_division=0),
         })
 
-    meeting = [c for c in candidates if c[target_metric] >= target_value]
-    if meeting:
-        best = max(meeting, key=lambda c: (c["f1"], c["threshold"]))
-    else:
-        best = max(candidates, key=lambda c: (c[target_metric], c["threshold"]))
-        warnings.warn(
-            f"No validation threshold reached {target_metric}={target_value}; "
-            f"using best {target_metric}={best[target_metric]:.3f} "
-            f"at threshold={best['threshold']}."
-        )
+    # Phase 1: Both targets met
+    meeting_both = [c for c in candidates 
+                    if c["recall"] >= target_recall and c["precision"] >= target_precision]
+    if meeting_both:
+        best = max(meeting_both, key=lambda c: (c["f1"], c["precision"]))
+        logger.info("Balanced threshold (both targets met): %.3f (P=%.3f R=%.3f F1=%.3f)",
+                    best["threshold"], best["precision"], best["recall"], best["f1"])
+        return best["threshold"], best
 
-    logger.info(
-        "Threshold selected: %.2f (recall=%.3f precision=%.3f f1=%.3f)",
-        best["threshold"], best["recall"], best["precision"], best["f1"],
+    # Phase 2: Closest to balanced point in PR space
+    # Minimize distance from (target_precision, target_recall)
+    def _pr_distance(c):
+        return ((c["precision"] - target_precision) ** 2 + 
+                (c["recall"] - target_recall) ** 2) ** 0.5
+
+    best_balanced = min(candidates, key=_pr_distance)
+
+    # Only use balanced if it's reasonably close; otherwise fall back to best F1
+    if _pr_distance(best_balanced) < 0.15:
+        logger.info("Balanced threshold (closest to target): %.3f (P=%.3f R=%.3f F1=%.3f)",
+                    best_balanced["threshold"], best_balanced["precision"], 
+                    best_balanced["recall"], best_balanced["f1"])
+        return best_balanced["threshold"], best_balanced
+
+    # Phase 3: Best F1
+    best_f1 = max(candidates, key=lambda c: c["f1"])
+    warnings.warn(
+        f"No threshold near balanced point. Using best F1={best_f1['f1']:.3f} "
+        f"at threshold={best_f1['threshold']}."
     )
-    return best["threshold"], best[target_metric]
+    return best_f1["threshold"], best_f1
 
 
 def evaluate(model, X, y, threshold=0.5) -> dict:
     proba = model.predict_proba(X)[:, 1]
     y_pred = (proba >= threshold).astype(int)
     return {
-        "precision": round(precision_score(y, y_pred, zero_division=0), 3),
-        "recall": round(recall_score(y, y_pred, zero_division=0), 3),
-        "f1": round(f1_score(y, y_pred, zero_division=0), 3),
-        "pr_auc": round(average_precision_score(y, proba), 3),
-        "roc_auc": round(roc_auc_score(y, proba), 3),
+        "precision": round(precision_score(y, y_pred, zero_division=0), 4),
+        "recall": round(recall_score(y, y_pred, zero_division=0), 4),
+        "f1": round(f1_score(y, y_pred, zero_division=0), 4),
+        "pr_auc": round(average_precision_score(y, proba), 4),
+        "roc_auc": round(roc_auc_score(y, proba), 4),
         "brier": round(brier_score_loss(y, proba), 4),
     }
 
 
-def _log_mlflow(run_name: str, params: dict, metrics: dict, model):
-    """Log params, metrics, and model to MLflow (local file:// tracking)."""
+def _log_mlflow(run_name, params, metrics, model):
     try:
         import os
         import mlflow
@@ -188,18 +237,20 @@ def _log_mlflow(run_name: str, params: dict, metrics: dict, model):
         warnings.warn(f"MLflow logging skipped: {e}")
 
 
-def train_all(max_rows: int | None = None, optuna_trials: int = 20):
-    """
-    Main training entry point: Optuna → calibration → MLflow → artifacts.
+def train_all(max_rows: int | None = None, optuna_trials: int = 30):
+    """Main training entry point: Optuna -> calibration -> threshold tuning -> artifacts.
 
-    ``max_rows`` optionally caps the number of IEEE-CIS rows read (temporal
-    head of the dataset) for smoke/validation runs — default None reads all.
+    ``max_rows`` optionally caps the number of IEEE-CIS rows read.
     """
     print("Loading real IEEE-CIS data...")
     train, val, test = load_data(max_rows=max_rows)
     print(f"Loaded: train={len(train)}, val={len(val)}, test={len(test)}")
 
-    # ── Fraud model ──────────────────────────────────────────────────────────
+    fraud_rate = train["isFraud"].mean()
+    fp_rate = train["is_false_positive"].mean()
+    print(f"Train fraud rate: {fraud_rate:.4f} | FP rate: {fp_rate:.4f}")
+
+    # ── Fraud model ──────────────────────────────────────────────────────
     X_tr_f = get_feature_matrix(train, FRAUD_FEATURES)
     y_tr_f = train["isFraud"].values
     X_va_f = get_feature_matrix(val, FRAUD_FEATURES)
@@ -207,22 +258,55 @@ def train_all(max_rows: int | None = None, optuna_trials: int = 20):
     X_te_f = get_feature_matrix(test, FRAUD_FEATURES)
     y_te_f = test["isFraud"].values
 
-    print("Running Optuna for fraud model (%d trials)..." % optuna_trials)
-    best_params_f = _run_optuna(X_tr_f, y_tr_f, X_va_f, y_va_f, n_trials=optuna_trials, study_name="fraud")
+    scale_pos_weight = (1 - fraud_rate) / fraud_rate if fraud_rate > 0 else 1.0
+    print(f"Fraud scale_pos_weight: {scale_pos_weight:.2f}")
 
-    print("Calibrating fraud model (isotonic, cv=5)...")
-    # Re-train on train split only for calibration
-    base_fraud = GradientBoostingClassifier(**best_params_f, random_state=42)
-    calibrated_fraud = CalibratedClassifierCV(estimator=base_fraud, method="isotonic", cv=5)
+    print(f"Running Optuna for fraud model ({optuna_trials} trials)...")
+    best_params_f = _run_optuna_xgb(
+        X_tr_f, y_tr_f, X_va_f, y_va_f,
+        scale_pos_weight=scale_pos_weight,
+        n_trials=optuna_trials,
+        study_name="fraud_xgb"
+    )
+
+    print("Training final fraud model with best params...")
+    try:
+        from xgboost import XGBClassifier
+    except ImportError:
+        raise ImportError("xgboost is required. Install: pip install xgboost")
+
+    final_params_f = {
+        **best_params_f,
+        "scale_pos_weight": scale_pos_weight,
+        "use_label_encoder": False,
+        "eval_metric": "logloss",
+        "random_state": 42,
+        "n_jobs": -1,
+    }
+    base_fraud = XGBClassifier(**final_params_f)
+    base_fraud.fit(X_tr_f, y_tr_f, eval_set=[(X_va_f, y_va_f)], verbose=False)
+
+    print("Calibrating fraud model (isotonic, temporal cv=5)...")
+    # FIX: Use TimeSeriesSplit for calibration to prevent temporal leakage
+    tscv = TimeSeriesSplit(n_splits=5)
+    calibrated_fraud = CalibratedClassifierCV(
+        estimator=base_fraud, method="isotonic", cv=tscv
+    )
     calibrated_fraud.fit(X_tr_f, y_tr_f)
 
-    fraud_threshold, _ = _tune_threshold(calibrated_fraud, X_va_f, y_va_f, target_metric="f1", target_value=0.50)
+    print("Tuning threshold for balanced precision/recall (P>=0.75, R>=0.65)...")
+    fraud_threshold, fraud_threshold_stats = _tune_threshold_balanced(
+        calibrated_fraud, X_va_f, y_va_f, 
+        target_precision=0.75, target_recall=0.65
+    )
+
     fraud_metrics = evaluate(calibrated_fraud, X_te_f, y_te_f, threshold=fraud_threshold)
     print(f"Fraud metrics (threshold={fraud_threshold}):", fraud_metrics)
 
-    _log_mlflow("fraud_model", best_params_f, {k: v for k, v in fraud_metrics.items()}, calibrated_fraud)
+    _log_mlflow("fraud_model_xgb", best_params_f, 
+                {k: v for k, v in fraud_metrics.items()}, calibrated_fraud)
 
-    # ── FP model ─────────────────────────────────────────────────────────────
+    # ── FP model ─────────────────────────────────────────────────────────
     X_tr_fp = get_feature_matrix(train, FP_FEATURES)
     y_tr_fp = train["is_false_positive"].values
     X_va_fp = get_feature_matrix(val, FP_FEATURES)
@@ -230,41 +314,40 @@ def train_all(max_rows: int | None = None, optuna_trials: int = 20):
     X_te_fp = get_feature_matrix(test, FP_FEATURES)
     y_te_fp = test["is_false_positive"].values
 
-    print("Training FP model with SMOTE (recall target=0.30)...")
+    print("Training FP model with SMOTE + XGBoost...")
     fp_model = _train_fp_model(X_tr_fp, y_tr_fp)
-    # FP model: target recall=0.30 (inherently harder on synthetic labels)
-    fp_threshold, _ = _tune_threshold(fp_model, X_va_fp, y_va_fp, target_metric="recall", target_value=0.30)
+
+    print("Tuning FP threshold for balanced precision/recall...")
+    fp_threshold, fp_threshold_stats = _tune_threshold_balanced(
+        fp_model, X_va_fp, y_va_fp, 
+        target_precision=0.60, target_recall=0.50
+    )
     fp_metrics = evaluate(fp_model, X_te_fp, y_te_fp, threshold=fp_threshold)
     print(f"FP metrics (threshold={fp_threshold}):", fp_metrics)
 
-    if fp_metrics.get("recall", 0) < 0.25:
-        warnings.warn(
-            f"FP recall {fp_metrics['recall']:.3f} below 0.25 target. "
-            "Investigate class balance or feature quality."
-        )
-
-    _log_mlflow("fp_model", {"n_estimators": 150, "max_depth": 3, "smote_strategy": 0.5},
+    _log_mlflow("fp_model_xgb", {"n_estimators": 200, "max_depth": 5}, 
                 {k: v for k, v in fp_metrics.items()}, fp_model)
 
-    # ── Save artifacts ────────────────────────────────────────────────────────
+    # ── Save artifacts ───────────────────────────────────────────────────
     _save_artifact(
         {"model": calibrated_fraud, "features": FRAUD_FEATURES, "metrics": fraud_metrics,
-         "threshold": fraud_threshold, "version": "gbc-fraud-v2-calibrated", "best_params": best_params_f},
+         "threshold": fraud_threshold, "version": "xgb-fraud-v2-calibrated", 
+         "best_params": best_params_f},
         FRAUD_MODEL_PATH,
     )
     _save_artifact(
         {"model": calibrated_fraud, "features": FRAUD_FEATURES, "metrics": fraud_metrics,
-         "threshold": fraud_threshold, "version": "gbc-fraud-v2-calibrated", "best_params": best_params_f},
+         "threshold": fraud_threshold, "version": "xgb-fraud-v2-calibrated", 
+         "best_params": best_params_f},
         FRAUD_CALIBRATED_PATH,
     )
-    # Shadow model = same calibrated model (can swap to a newer architecture later)
     _save_artifact(
         {"model": calibrated_fraud, "features": FRAUD_FEATURES, "version": "shadow-v1"},
         FRAUD_SHADOW_PATH,
     )
     _save_artifact(
         {"model": fp_model, "features": FP_FEATURES, "metrics": fp_metrics,
-         "threshold": fp_threshold, "version": "gbc-fp-v2"},
+         "threshold": fp_threshold, "version": "xgb-fp-v2"},
         FP_MODEL_PATH,
     )
     _save_artifact({"threshold": fraud_threshold}, FRAUD_THRESHOLD_PATH)

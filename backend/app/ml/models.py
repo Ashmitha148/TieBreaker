@@ -10,15 +10,20 @@ logger = logging.getLogger(__name__)
 
 ARTIFACTS_DIR = Path(__file__).parent / "artifacts"
 
-# Feature lists are imported from data.py (single source of truth, kept in
-# sync with the training pipeline). The artifact's own ``features`` key
-# always takes precedence at load time — these are fallbacks only.
+# Feature lists are imported from data.py (single source of truth).
+# The artifact's own ``features`` key always takes precedence at load time.
 
 try:
     from sklearn.ensemble import GradientBoostingClassifier
     SKLEARN_AVAILABLE = True
 except ImportError:
     SKLEARN_AVAILABLE = False
+
+try:
+    from xgboost import XGBClassifier
+    XGBOOST_AVAILABLE = True
+except ImportError:
+    XGBOOST_AVAILABLE = False
 
 
 def _verify_sha256(path: Path) -> bool:
@@ -55,7 +60,8 @@ class ModelManager:
         self._load_models()
 
     def _load_models(self):
-        if not SKLEARN_AVAILABLE:
+        if not SKLEARN_AVAILABLE and not XGBOOST_AVAILABLE:
+            logger.warning("Neither sklearn nor xgboost available; using heuristic fallback")
             return
 
         paths = {
@@ -77,7 +83,7 @@ class ModelManager:
                         "version": data.get("version", "unknown"),
                         "best_params": data.get("best_params", {}),
                     }
-                    logger.info(f"Loaded {name} model from {path}")
+                    logger.info(f"Loaded {name} model from {path} (version={data.get('version', 'unknown')})")
                 except Exception as e:
                     logger.warning(f"Failed to load {name} model: {e}")
             else:
@@ -88,7 +94,7 @@ class ModelManager:
     # ------------------------------------------------------------------
     def current_version_info(self) -> dict:
         return {
-            "version": "gbc-fraud-v2",
+            **self._version_info,
             "fraud_threshold": self.fraud_threshold,
             "fp_threshold": self.fp_threshold,
         }
@@ -98,19 +104,27 @@ class ModelManager:
             import shap
             if self.fraud_model is None:
                 raise RuntimeError("Fraud model not loaded")
-            explainer = shap.TreeExplainer(self.fraud_model)
+
+            # Handle CalibratedClassifierCV wrapper
+            model_for_shap = self.fraud_model
+            if hasattr(model_for_shap, "calibrated_classifiers_"):
+                model_for_shap = model_for_shap.calibrated_classifiers_[0].estimator
+
+            explainer = shap.TreeExplainer(model_for_shap)
             features = _extract_features(record, self.fraud_features)
             sv = explainer.shap_values([features])
             if isinstance(sv, list):
-                sv = sv[1][0]
+                sv = sv[1][0] if len(sv) > 1 else sv[0][0]
+            else:
+                sv = sv[0]
             pairs = list(zip(self.fraud_features, sv))
             pairs.sort(key=lambda x: abs(x[1]), reverse=True)
             return [{"feature": f, "impact": round(float(i), 4)} for f, i in pairs[:top_n]]
         except Exception:
-            # Heuristic fallback — NEVER crash the API for explainability
+            # Heuristic fallback
             drivers = []
-            if record.get("velocity_1h", 0) > 3:
-                drivers.append({"feature": "velocity_1h", "impact": 0.25})
+            if record.get("velocity_1h_count", 0) > 3:
+                drivers.append({"feature": "velocity_1h_count", "impact": 0.25})
             if record.get("TransactionAmt", 0) > 50000:
                 drivers.append({"feature": "TransactionAmt", "impact": 0.20})
             if record.get("hour_of_day", 12) < 6:
@@ -131,7 +145,7 @@ class ModelManager:
         # Heuristic fallback
         amt = record.get("TransactionAmt", 0)
         hour = record.get("hour_of_day", 12)
-        velocity = record.get("velocity_24h", 0)
+        velocity = record.get("velocity_24h_count", 0)
         score = 0.0
         if amt > 50000:
             score += 0.3
@@ -159,7 +173,7 @@ class ModelManager:
         return max(score, 0.0)
 
     # ------------------------------------------------------------------
-    # Review time (deterministic heuristic — no ML model)
+    # Review time (deterministic heuristic)
     # ------------------------------------------------------------------
     def predict_review_time(self, record: dict) -> float:
         """Return estimated review time in minutes."""

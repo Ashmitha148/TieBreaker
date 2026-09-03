@@ -11,6 +11,7 @@ import Performance from './pages/Performance'
 import Config from './pages/Config'
 import Audit from './pages/Audit'
 import ShadowMode from './pages/ShadowMode' // ← NEW
+import DemoStore from './pages/DemoStore'
 
 function AnimatedRoutes() {
   const location = useLocation()

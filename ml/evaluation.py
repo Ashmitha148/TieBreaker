@@ -1,5 +1,5 @@
-"""
-TieBreaker Model Evaluation — compatibility shim.
+ï»¿"""
+TieBreaker Model Evaluation - compatibility shim.
 
 This is a thin wrapper around the canonical in-package implementation at
 ``backend/app/ml/evaluation.py``.  Running ``python ml/evaluation.py`` from the
@@ -17,3 +17,4 @@ from app.ml.evaluation import main  # noqa: E402
 
 if __name__ == "__main__":
     main()
+
