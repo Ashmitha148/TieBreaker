@@ -32,14 +32,8 @@ def upgrade() -> None:
             nullable=False,
         ),
     )
-    op.create_index(
-        "ix_shadow_predictions_transaction_id",
-        "shadow_predictions",
-        ["transaction_id"],
-        unique=False,
-    )
+    
 
 
 def downgrade() -> None:
-    op.drop_index("ix_shadow_predictions_transaction_id", table_name="shadow_predictions")
     op.drop_table("shadow_predictions")
