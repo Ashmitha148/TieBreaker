@@ -22,59 +22,79 @@ def _temporal_rolling(df: pd.DataFrame, group_col: str, time_col: str,
     """Leakage-safe temporal rolling aggregation. Each row sees ONLY past
     transactions within [time - window, time) — current row EXCLUDED.
 
-    Uses vectorized searchsorted + cumsum for O(n log n) per group.
+    Rows are sorted by (group, time); within each contiguous group the times are
+    ascending, so the window lower bound is found with ``np.searchsorted`` on
+    that group's segment. The search is O(log len(group)) per row and all the
+    arithmetic is vectorized per group (no per-row Python loop).
     """
     if group_col not in df.columns or time_col not in df.columns or agg_col not in df.columns:
         return pd.Series(0.0, index=df.index)
 
-    tmp = df[[group_col, time_col, agg_col]].copy()
-    tmp["_row"] = np.arange(len(df))
-    tmp = tmp.sort_values([group_col, time_col])
+    n = len(df)
+    if n == 0:
+        return pd.Series(dtype=np.float64)
 
-    result = np.zeros(len(df), dtype=np.float64)
+    group = df[group_col].to_numpy()
+    times = df[time_col].to_numpy(dtype=np.float64)
+    vals = df[agg_col].to_numpy(dtype=np.float64)
 
-    for _, group in tmp.groupby(group_col, sort=False):
-        if len(group) == 0:
+    # Sort by (group, time) so each group is contiguous with ascending times.
+    order = np.lexsort((times, group))
+    g = group[order]
+    t = times[order]
+    v = vals[order]
+
+    result = np.zeros(n, dtype=np.float64)
+    window = float(window_sec)
+
+    # Consecutive group start positions (g is sorted, so unique values give the
+    # boundaries directly).
+    starts = np.unique(g, return_index=True)[1]
+    if starts.size == 0:
+        return pd.Series(result, index=df.index)
+
+    ends = np.concatenate([starts[1:], [n]])
+    for start, end in zip(starts, ends):
+        seg_len = int(end - start)
+        if seg_len <= 1:
             continue
-        times = group[time_col].values
-        vals = group[agg_col].values
-        rows = group["_row"].values
-        n = len(group)
 
-        # For each position i, find first index with time >= times[i] - window
-        left_bounds = times - window_sec
-        start_idx = np.searchsorted(times, left_bounds, side="left")
+        t_seg = t[start:end]
+        v_seg = v[start:end]
+        idx_local = np.arange(seg_len, dtype=np.int64)
 
-        # Cumulative sums for O(1) range queries
-        cumsum = np.cumsum(vals)
-        cumsum_sq = np.cumsum(vals ** 2)
+        # First index in this group with time >= time_i - window. Times within
+        # the segment are ascending, so this equals searchsorted on the segment;
+        # e = idx_local excludes the current row (and same-time rows).
+        lo = np.searchsorted(t_seg, t_seg - window, side="left")
+        s = lo
+        cnt = idx_local - s
 
-        for i in range(n):
-            s, e = start_idx[i], i  # e = i excludes current row
-            if s >= e:
-                result[rows[i]] = 0.0
-                continue
-            cnt = e - s
-            sm = cumsum[e - 1] - (cumsum[s - 1] if s > 0 else 0.0)
-
-            if agg == "count":
-                result[rows[i]] = float(cnt)
-            elif agg == "sum":
-                result[rows[i]] = float(sm)
-            elif agg == "mean":
-                result[rows[i]] = float(sm / cnt)
+        if agg == "count":
+            out = cnt.astype(np.float64)
+        else:
+            # pre[j] = sum of first j elements -> window [s, idx) = pre[idx]-pre[s]
+            pre = np.concatenate([[0.0], np.cumsum(v_seg)])
+            sm = pre[idx_local] - pre[s]
+            if agg == "mean":
+                out = np.divide(sm, cnt, out=np.zeros(seg_len, dtype=np.float64),
+                                where=cnt > 0)
             elif agg == "std":
-                if cnt > 1:
-                    sq = cumsum_sq[e - 1] - (cumsum_sq[s - 1] if s > 0 else 0.0)
-                    mean = sm / cnt
-                    var = max((sq / cnt) - mean ** 2, 0.0)
-                    result[rows[i]] = float(np.sqrt(var))
-                else:
-                    result[rows[i]] = 0.0
-            else:
-                result[rows[i]] = float(sm / cnt)
+                pre2 = np.concatenate([[0.0], np.cumsum(v_seg * v_seg)])
+                sq = pre2[idx_local] - pre2[s]
+                mean = sm / np.maximum(cnt, 1.0)
+                var = (sq / np.maximum(cnt, 1.0)) - mean ** 2
+                var = np.clip(var, 0.0, None)
+                out = np.sqrt(var)
+                out[cnt <= 1] = 0.0
+            else:  # sum and fallback
+                out = sm.astype(np.float64)
 
-    return pd.Series(result, index=df.index)
+        result[start:end] = out
+
+    out_series = np.zeros(n, dtype=np.float64)
+    out_series[order] = result
+    return pd.Series(out_series, index=df.index)
 
 
 # ---------------------------------------------------------------------------
@@ -234,4 +254,75 @@ def transaction_count_by_card1_hour(df: pd.DataFrame) -> pd.Series:
     tmp["count"] = tmp.groupby(["card1", "hour_of_day"]).cumcount()
     out = np.empty(len(df), dtype=np.float64)
     out[tmp["_row"].values] = tmp["count"].values
+    return pd.Series(out, index=df.index)
+
+
+# ---------------------------------------------------------------------------
+# Extra leakage-safe features (cheap, no future info)
+# ---------------------------------------------------------------------------
+def log_amt(df: pd.DataFrame) -> pd.Series:
+    """Log-transformed transaction amount (skew reduction)."""
+    if "TransactionAmt" not in df.columns:
+        return pd.Series(0.0, index=df.index)
+    return np.log1p(df["TransactionAmt"].to_numpy(dtype=np.float64))
+
+
+def product_cd_encoded(df: pd.DataFrame) -> pd.Series:
+    """Encode ProductCD (W/C/R/S/H). Unknown -> 0."""
+    if "ProductCD" not in df.columns:
+        return pd.Series(0.0, index=df.index)
+    mapping = {"W": 1, "C": 2, "R": 3, "S": 4, "H": 5}
+    return df["ProductCD"].map(mapping).fillna(0).astype(float)
+
+
+def recv_email_domain_risk(df: pd.DataFrame) -> pd.Series:
+    """Risk score based on R_emaildomain (same bands as sender domain)."""
+    if "R_emaildomain" not in df.columns:
+        return pd.Series(0.0, index=df.index)
+    domain = df["R_emaildomain"].fillna("unknown").str.lower()
+    high_risk = {"mail.com", "outlook.com", "protonmail.com", "yandex.com"}
+    medium_risk = {"hotmail.com", "live.com", "yahoo.com", "gmail.com"}
+    return domain.apply(
+        lambda d: 2 if d in high_risk else (1 if d in medium_risk else 0)
+    ).astype(float)
+
+
+def id_02_usage_ratio(df: pd.DataFrame) -> pd.Series:
+    """TransactionAmt / id_02 — amount per 'unit'. Missing id_02 -> 0."""
+    if "TransactionAmt" not in df.columns or "id_02" not in df.columns:
+        return pd.Series(0.0, index=df.index)
+    amt = df["TransactionAmt"].to_numpy(dtype=np.float64)
+    id02 = df["id_02"].to_numpy(dtype=np.float64)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = amt / id02
+    return pd.Series(np.nan_to_num(ratio, nan=0.0, posinf=0.0, neginf=0.0))
+
+
+def is_email_domain_match(df: pd.DataFrame) -> pd.Series:
+    """1 when sender and recipient email domains are identical."""
+    if "P_emaildomain" not in df.columns or "R_emaildomain" not in df.columns:
+        return pd.Series(0.0, index=df.index)
+    p = df["P_emaildomain"].fillna("unknown").str.lower()
+    r = df["R_emaildomain"].fillna("unknown").str.lower()
+    return (p == r).astype(float)
+
+
+# Match-flag columns (M1..M9) are set pre-transaction (billing/address
+# verifications recorded at transaction time), so their counts carry no
+# future information — safe to aggregate into a single compact risk signal.
+_M_COLS = ["M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8", "M9"]
+
+
+def m_match_count(df: pd.DataFrame) -> pd.Series:
+    """Count of successful match flags (M1..M9). Missing/unmatched -> 0.
+
+    More matches historically accompany legitimate transactions; a low count
+    is a leakage-safe, cheap fraud signal (no temporal look-ahead)."""
+    out = np.zeros(len(df), dtype=np.float64)
+    present = [c for c in _M_COLS if c in df.columns]
+    if not present:
+        return pd.Series(out, index=df.index)
+    for c in present:
+        s = df[c].astype("object")
+        out += (s == "T").astype(float).to_numpy()
     return pd.Series(out, index=df.index)
