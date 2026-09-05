@@ -157,7 +157,7 @@ export default function DemoStore() {
   const [lastVerdict, setLastVerdict] = useState<{ action: string; comparison: string } | null>(null)
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' | 'info' } | null>(null)
   const [metrics, setMetrics] = useState<any>(null)
-  const pollRef = useRef<NodeJS.Timeout | null>(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Fetch a fresh demo transaction from the REAL backend model
   const fetchDemoTx = useCallback(async () => {
