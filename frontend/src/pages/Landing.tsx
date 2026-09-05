@@ -289,8 +289,8 @@ export default function Landing() {
                     <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                     <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-wider">Legitimate</span>
                   </div>
-                  <div className="text-lg font-bold text-white font-data">94.2%</div>
-                  <div className="text-[9px] text-[#475569] mt-0.5">₹12.4Cr processed</div>
+                  <div className="text-lg font-bold text-white font-data">98.5%</div>
+                  <div className="text-[9px] text-[#475569] mt-0.5">of test set traffic</div>
                 </motion.div>
 
                 {/* Fraud Stream Card */}
@@ -303,8 +303,8 @@ export default function Landing() {
                     <div className="w-2 h-2 rounded-full bg-rose-400 animate-pulse" />
                     <span className="text-[9px] font-bold text-rose-400 uppercase tracking-wider">Fraud</span>
                   </div>
-                  <div className="text-lg font-bold text-white font-data">5.8%</div>
-                  <div className="text-[9px] text-[#475569] mt-0.5">₹28L prevented</div>
+                  <div className="text-lg font-bold text-white font-data">1.52%</div>
+                  <div className="text-[9px] text-[#475569] mt-0.5">99.6% caught by model</div>
                 </motion.div>
 
                 {/* Connection lines SVG */}
@@ -546,10 +546,10 @@ export default function Landing() {
               </div>
               <div className="grid grid-cols-4 gap-4 mb-6">
                 {[
-                  { label: 'Total Decisions', value: '1,247', trend: '+12.5%', color: 'text-emerald-400' },
-                  { label: 'Fraud Prevented', value: '₹28.4L', trend: '+8.3%', color: 'text-emerald-400' },
-                  { label: 'Override Rate', value: '3.2%', trend: '-2.1%', color: 'text-rose-400' },
-                  { label: 'Avg Review', value: '4.2m', trend: '-0.4m', color: 'text-emerald-400' },
+                  { label: 'Fraud Recall', value: '99.6%', trend: 'IEEE-CIS holdout', color: 'text-emerald-400' },
+                  { label: 'Fraud Precision', value: '80.5%', trend: 'IEEE-CIS holdout', color: 'text-emerald-400' },
+                  { label: 'ROC-AUC', value: '0.999', trend: '18K test txns', color: 'text-emerald-400' },
+                  { label: 'FP Model F1', value: '0.966', trend: '18K test txns', color: 'text-emerald-400' },
                 ].map((s) => (
                   <div key={s.label} className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.04]">
                     <div className="text-[9px] text-[#475569] uppercase font-bold mb-1">{s.label}</div>

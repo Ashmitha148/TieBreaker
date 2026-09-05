@@ -20,12 +20,12 @@ def test_list_payments_returns_persisted_records():
 
 
 def test_verify_checkout_payment_unconfigured_returns_503(monkeypatch):
-    """When Razorpay is not configured, POST /api/payment/verify returns HTTP 503."""
+    """When Razorpay is not configured, POST /api/payments/verify returns HTTP 503."""
     monkeypatch.setattr(settings, "RAZORPAY_KEY_ID", "")
     monkeypatch.setattr(settings, "RAZORPAY_KEY_SECRET", "")
 
     response = client.post(
-        "/api/payment/verify",
+        "/api/payments/verify",
         json={
             "razorpay_order_id": "order_unconf_001",
             "razorpay_payment_id": "pay_unconf_001",
@@ -37,7 +37,7 @@ def test_verify_checkout_payment_unconfigured_returns_503(monkeypatch):
 
 def test_verify_checkout_missing_fields_returns_422():
     """Missing fields in verification request returns HTTP 422."""
-    res = client.post("/api/payment/verify", json={"razorpay_order_id": "order_only"})
+    res = client.post("/api/payments/verify", json={"razorpay_order_id": "order_only"})
     assert res.status_code == 422
 
 
@@ -65,7 +65,7 @@ def test_verify_checkout_payment_valid_signature(monkeypatch):
         db.close()
 
     response = client.post(
-        "/api/payment/verify",
+        "/api/payments/verify",
         json={
             "razorpay_order_id": order_id,
             "razorpay_payment_id": payment_id,
@@ -89,7 +89,7 @@ def test_verify_checkout_payment_invalid_signature(monkeypatch):
     monkeypatch.setattr(settings, "RAZORPAY_KEY_SECRET", "test_key_secret_999")
 
     response = client.post(
-        "/api/payment/verify",
+        "/api/payments/verify",
         json={
             "razorpay_order_id": "order_bad_sig_001",
             "razorpay_payment_id": "pay_bad_sig_001",

@@ -66,10 +66,10 @@ export default function Dashboard() {
   ]
 
   const stats = [
-    { label: 'Total Decisions', value: metrics?.system_stats?.total_decisions ?? 1247, prefix: '', trend: '+12.5%', up: true, icon: Activity },
-    { label: 'Fraud Prevented', value: metrics?.financial_impact?.fraud_loss_prevented ?? 2840000, prefix: '₹', trend: '+8.3%', up: true, icon: Shield },
-    { label: 'Override Rate', value: metrics?.system_stats?.override_rate ?? 3.2, prefix: '', suffix: '%', decimals: 1, trend: '-2.1%', up: false, icon: AlertTriangle },
-    { label: 'Avg Review', value: metrics?.queue_stats?.avg_review_time_minutes ?? 4.2, prefix: '', suffix: 'm', decimals: 1, trend: '-0.4m', up: true, icon: Clock },
+    { label: 'Total Decisions', value: metrics?.system_stats?.total_decisions ?? 0, prefix: '', icon: Activity },
+    { label: 'Fraud Prevented', value: metrics?.financial_impact?.fraud_loss_prevented ?? 0, prefix: '₹', icon: Shield },
+    { label: 'Override Rate', value: metrics?.system_stats?.override_rate ?? 0, prefix: '', suffix: '%', decimals: 1, icon: AlertTriangle },
+    { label: 'Avg Review', value: metrics?.queue_stats?.avg_review_time_minutes ?? 0, prefix: '', suffix: 'm', decimals: 1, icon: Clock },
   ]
 
   return (
@@ -111,9 +111,6 @@ export default function Dashboard() {
                 >
                   <div className="flex items-center justify-between mb-3">
                     <Icon className="w-4 h-4 text-[#475569]" />
-                    <span className={`text-[10px] font-bold font-mono ${s.up ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {s.trend}
-                    </span>
                   </div>
                   <div className="text-2xl font-bold text-white font-data">
                     {s.prefix}{s.value.toLocaleString('en-IN', { minimumFractionDigits: s.decimals || 0, maximumFractionDigits: s.decimals || 0 })}{s.suffix}

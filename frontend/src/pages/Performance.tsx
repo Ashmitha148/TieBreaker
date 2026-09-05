@@ -50,7 +50,6 @@ export default function Performance() {
               <motion.div key={s.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }} className="float-card p-5">
                 <div className="flex items-center justify-between mb-3">
                   <TrendingUp className="w-4 h-4 text-[#475569]" />
-                  <span className="text-[10px] font-bold font-mono text-emerald-400">+{(Math.random() * 10 + 5).toFixed(1)}%</span>
                 </div>
                 <div className="text-2xl font-bold font-data" style={{ color: s.color }}>
                   {s.prefix}{s.value.toLocaleString('en-IN')}
