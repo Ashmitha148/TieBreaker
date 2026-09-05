@@ -26,9 +26,9 @@ export default function Dashboard() {
 
   useEffect(() => {
     Promise.all([
-      fetch(`${API_URL}/api/metrics`, { headers: apiHeaders() })
-      fetch(`${API_URL}/api/queue?limit=10`, { headers: apiHeaders() }).then(r => r.ok ? r.json() : Promise.reject())
-    ])
+  fetch(`${API_URL}/api/metrics`, { headers: apiHeaders() }).then(r => r.ok ? r.json() : Promise.reject()),
+  fetch(`${API_URL}/api/queue?limit=10`, { headers: apiHeaders() }).then(r => r.ok ? r.json() : Promise.reject())
+])
       .then(([m, q]) => {
         setMetrics(m)
         setTxns(q.cases || [])
