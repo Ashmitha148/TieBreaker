@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+﻿from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import Optional
 
@@ -108,80 +108,82 @@ def verify_payment_endpoint(
         )
 
     # Step 2: Look up the order to get amount + link payment
-    order = db.query(Order).filter(
-        Order.razorpay_order_id == payload.razorpay_order_id
-    ).first()
-    amount_in_rupees = (order.amount / 100.0) if order else 0.0
+        # Step 2: Look up the order to get amount + link payment
+    try:
+        order = db.query(Order).filter(
+            Order.razorpay_order_id == payload.razorpay_order_id
+        ).first()
+        amount_in_rupees = (order.amount / 100.0) if order else 0.0
 
-    # Step 3: Run the fraud/FP risk-scoring pipeline
-    record = {
-        "TransactionAmt": amount_in_rupees,
-        "amount": amount_in_rupees,
-        "hour_of_day": 12,
-        "day_of_week": 0,
-        "device_change_flag": 0,
-        "geo_mismatch_flag": 0,
-        "is_cross_border": 0,
-        "customer_tenure_days": 365,
-        "customer_tx_count_30d": 10,
-        "customer_refund_rate": 0.0,
-        "velocity_1h": 0,
-        "velocity_24h": 0,
-    }
-    prediction = predict_transaction(record)
-    fraud_prob = prediction["fraud_probability"]
-    fp_prob = prediction["fp_probability"]
+        record = {
+            "TransactionAmt": amount_in_rupees,
+            "amount": amount_in_rupees,
+            "hour_of_day": 12,
+            "day_of_week": 0,
+            "device_change_flag": 0,
+            "geo_mismatch_flag": 0,
+            "is_cross_border": 0,
+            "customer_tenure_days": 365,
+            "customer_tx_count_30d": 10,
+            "customer_refund_rate": 0.0,
+            "velocity_1h": 0,
+            "velocity_24h": 0,
+        }
+        prediction = predict_transaction(record)
+        fraud_prob = prediction["fraud_probability"]
+        fp_prob = prediction["fp_probability"]
 
-    if fraud_prob > 0.7:
-        recommended_action = "BLOCK"
-    elif fraud_prob > 0.5:
-        recommended_action = "REVIEW"
-    elif fraud_prob > 0.3:
-        recommended_action = "VERIFY"
-    else:
-        recommended_action = "ALLOW"
+        if fraud_prob > 0.7:
+            recommended_action = "BLOCK"
+        elif fraud_prob > 0.5:
+            recommended_action = "REVIEW"
+        elif fraud_prob > 0.3:
+            recommended_action = "VERIFY"
+        else:
+            recommended_action = "ALLOW"
 
-    # Step 4: Persist the decision
-    decision = Decision(
-        transaction_id=payload.razorpay_payment_id,
-        fraud_prob=fraud_prob,
-        fp_prob=fp_prob,
-        amount=amount_in_rupees,
-        ltv=0.0,
-        recommended_action=recommended_action,
-        baseline_action="ALLOW",
-        savings_vs_baseline=0.0,
-        model_version=prediction.get("model_version", "unloaded"),
-        config_version="1.0",
-        is_counterintuitive=(recommended_action == "REVIEW" and fraud_prob > 0.5),
-    )
-    db.add(decision)
+        decision = Decision(
+            transaction_id=payload.razorpay_payment_id,
+            fraud_prob=fraud_prob,
+            fp_prob=fp_prob,
+            amount=amount_in_rupees,
+            ltv=0.0,
+            recommended_action=recommended_action,
+            baseline_action="ALLOW",
+            savings_vs_baseline=0.0,
+            model_version=prediction.get("model_version", "unloaded"),
+            config_version="1.0",
+            is_counterintuitive=(recommended_action == "REVIEW" and fraud_prob > 0.5),
+        )
+        db.add(decision)
 
-    # Step 5: Update order status + persist payment record
-    if order:
-        order.status = "paid"
+        if order:
+            order.status = "paid"
 
-    payment = Payment(
-        razorpay_payment_id=payload.razorpay_payment_id,
-        razorpay_order_id=payload.razorpay_order_id,
-        order_id=order.id if order else None,
-        amount=order.amount if order else 0,
-        currency=order.currency if order else "INR",
-        status="captured",
-    )
-    db.add(payment)
-    db.commit()
+        payment = Payment(
+            razorpay_payment_id=payload.razorpay_payment_id,
+            razorpay_order_id=payload.razorpay_order_id,
+            order_id=order.id if order else None,
+            amount=order.amount if order else 0,
+            currency=order.currency if order else "INR",
+            status="captured",
+        )
+        db.add(payment)
+        db.commit()
 
-    return {
-        "status": "success",
-        "message": "Payment verified successfully",
-        "razorpay_order_id": payload.razorpay_order_id,
-        "razorpay_payment_id": payload.razorpay_payment_id,
-        "transaction_id": payload.razorpay_payment_id,
-        "amount": amount_in_rupees,
-        "recommended_action": recommended_action,
-        "fraud_probability": fraud_prob,
-        "fp_probability": fp_prob,
-        "is_counterintuitive": decision.is_counterintuitive,
-    }
-
+        return {
+            "status": "success",
+            "message": "Payment verified successfully",
+            "razorpay_order_id": payload.razorpay_order_id,
+            "razorpay_payment_id": payload.razorpay_payment_id,
+            "transaction_id": payload.razorpay_payment_id,
+            "amount": amount_in_rupees,
+            "recommended_action": recommended_action,
+            "fraud_probability": fraud_prob,
+            "fp_probability": fp_prob,
+            "is_counterintuitive": decision.is_counterintuitive,
+        }
+    except Exception as e:
+        db.rollback()
+        import traceback
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}")
