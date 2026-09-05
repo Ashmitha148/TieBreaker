@@ -36,7 +36,7 @@ def test_threshold_baseline(client):
 
 def test_api_transaction_detail(client):
     # Use a transaction ID that exists in the dataset
-    response = client.get('/api/transactions/TXN-COUNTER-001')
+    response = client.get('/api/transactions/TXN-COUNTER-001', headers={'X-API-Key': 'tiebreaker-local-dev-key'})
     assert response.status_code == 200
     data = response.json()
     assert 'fraud_prob' in data

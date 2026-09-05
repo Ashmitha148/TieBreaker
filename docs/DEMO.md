@@ -1,219 +1,75 @@
-# TieBreaker — App Walkthrough
+# TieBreaker — Demo Script
 
-A quick tour of all features. Useful for anyone exploring the app: judges, mentors, users, or teammates.
+A walkthrough for anyone evaluating the live app: judges, mentors, or the team rehearsing before judging. Written against the routes actually wired into `App.tsx` today.
 
----
-
-## 1. Landing Page
-
-**URL**: http://localhost:5173
-
-What you'll see:
-- Particle network animation in the background (canvas-based, connects nearby dots)
-- Dual-stream visualization — Legitimate (green) and Fraud (red) streams converging on an AI brain
-- Animated counters that tick up when scrolled into view
-- Gradient underline animation on "Payment Risk"
-- Scroll-down chevron that bounces
-
-What this shows:
-The landing page tells the story visually: two transaction streams being intelligently separated by AI. It's not just a dashboard — it's a product narrative.
+**Before presenting, check `GET /health`.** If `ml.fraud_model_loaded` or `ml.fp_model_loaded` is `false`, the affected model-backed functionality may use the heuristic fallback instead of the trained XGBoost model.
 
 ---
 
-## 2. Checkout Demo
+## The one thing to get right: which flow you demo
 
-**URL**: http://localhost:5173/checkout
-**Or**: Click "Try Live Demo" on the landing page
+TieBreaker's actual differentiator — expected-loss optimization producing a "counterintuitive" REVIEW over a naive BLOCK — lives in the **Strike Decision Engine**, which is only exercised by `POST /api/transactions` and `POST /api/what-if`. The `/checkout` page (real Razorpay integration) currently runs a **simpler fixed-threshold** decision, not the Strike Engine (`docs/ARCHITECTURE.md` §2).
 
-What to do:
-1. Enter amount: 45000
-2. Click "Pay Rs 45,000"
-3. Watch the 6-step pipeline animation
-
-What you'll see:
-- Pipeline steps animate sequentially: Payment -> Velocity -> Fraud Model -> FP Model -> Decision -> Action
-- Each step shows detail text (e.g., "prob: 0.72")
-- Result card shows 4 metric boxes: Amount, Fraud Prob, FP Prob, Confidence
-- Counterintuitive warning banner (if REVIEW is chosen over BLOCK)
-- "New Payment" button resets the flow
-
-What this shows:
-Most fraud systems would BLOCK a 72% fraud case. TieBreaker says REVIEW because the cost model says so. The counterintuitive flag is the key differentiator.
+**So: demo the Razorpay integration to prove the payments plumbing is real, and demo the What-If Simulator or Command Center to prove the cost-optimization story.** Don't rely on `/checkout` alone to show off the engine — it won't produce the counterintuitive result you want to talk about.
 
 ---
 
-## 3. Command Center
+## 1. Landing (`/`)
 
-**URL**: http://localhost:5173/command
-**Or**: Click "Command Center" in sidebar
+Particle-field canvas animation, animated stat counters, product framing. Nothing to interact with — a 10-second establishing shot, not a feature.
 
-What you'll see:
-- Live ticker — scrolling transaction feed at top
-- Transaction pipeline — 6 steps, initially idle
-- 4 stat cards: Total Decisions, Fraud Prevented, Override Rate, Avg Review
-- Live transactions table — 8 rows with risk bars, action pills, counterintuitive badges
-- Model performance bars — gradient bars showing F1 scores
+## 2. Checkout (`/checkout`)
 
-Try this:
-Click any transaction row (e.g., pay_LxK9mN2pQr). The pipeline will populate with that transaction's data, then auto-navigate to the detail page after 600ms.
+**What it proves**: real Razorpay Test Mode integration — a real Razorpay Test Mode order is created via the Razorpay Orders API, Checkout.js opens, and the returned signature is verified server-side (`docs/API.md` — Orders/Payments).
 
-What this shows:
-Real-time monitoring. Risk bars, action pills, and "Counter" badges give instant visual status.
+**What it doesn't prove**: the cost-optimizing decision (see above — this path uses a fixed fraud-probability threshold).
 
----
+Enter an amount, complete the Razorpay Test Mode checkout (use Razorpay's published test card/UPI credentials, not real payment details), and point out the signature verification step in `POST /api/payment/verify` if asked how integrity is enforced.
 
-## 4. Transaction Detail
+## 3. Command Center (`/command`)
 
-**URL**: Auto-navigates from Command Center, or /transaction/pay_LxK9mN2pQr
+Pulls `GET /api/metrics` and `GET /api/queue`. Click a transaction row to navigate to its detail page.
 
-What you'll see:
-- Transaction pipeline — same 6 steps, now fully populated
-- Decision timeline — timestamped journey with +ms durations
-- Velocity flags — shows why the transaction was flagged
-- SHAP explanation — feature importance bars (amount, velocity, device, etc.)
-- What-If Simulator — two sliders + 4 action cost cards + recommendation
-- Transaction details — Amount, probabilities, counterintuitive status
-- Analyst override panel — 4 action buttons + reason textarea + submit
+## 4. What-If Simulator — the actual centerpiece
 
-Try this:
-1. Drag the Fraud Probability slider to 90% — watch the recommended action change
-2. Drag the FP Probability slider to 40% — watch BLOCK become the cheapest option
-3. Click an override action (e.g., ALLOW) — button highlights
-4. Type a reason — textarea accepts input
-5. Click "Submit Override" — toast notification appears
+Reachable from the Transaction Detail page, or directly via `POST /api/what-if`. This is where to make the "counterintuitive" case land:
 
-What this shows:
-The analyst experience. Full explainability (SHAP), full traceability (timeline), full control (override), and full experimentation (What-If). No black boxes.
+1. Set a high fraud probability (or amount) and a high LTV.
+2. Show the four losses side-by-side (`financial_analysis.losses_by_action`) and point out that REVIEW (or VERIFY) beats BLOCK once LTV is in the picture.
+3. Nudge LTV down 20% via `parameter_sensitivity` and show how the recommendation changes, if the selected scenario crosses the decision boundary — this demonstrates the decision is genuinely sensitive to the economics, not just cosmetic.
 
----
+If the transaction-detail page's fetch bug (above) isn't fixed yet, this is also the safest way to demo the engine directly — If the transaction-detail page is unavailable, use the What-If Simulator directly as the fallback demonstration path.
 
-## 5. Queue Oracle
+## 5. Queue (`/queue`)
 
-**URL**: http://localhost:5173/queue
-**Or**: Click "Queue Oracle" in sidebar
+`GET /api/queue`, ranked by impact score. Falls back to clearly-labeled synthetic demo cases (`"source": "demo"`) if the database is empty — If the database is empty, run `POST /api/demo/seed-decisions` before the demo so the queue is populated with clearly identified demo data.
 
-What you'll see:
-- Priority-ranked cards — highest impact score at top
-- Impact score — composite metric (fraud + amount + LTV + wait time)
-- Waiting time — shows how long each case has been queued
-- Quick action buttons — ALLOW (green), BLOCK (red), REVIEW (amber), Details (arrow)
+## 6. Override Learning (`/learning`)
 
-Try this:
-Click the BLOCK button on any queue item. The card disappears with a smooth animation.
+Shows a before/after metrics toggle backed by `GET /api/insights`. **Say this out loud if asked**: on a fresh database these numbers are illustrative placeholders, not a measured accuracy improvement (`docs/ARCHITECTURE.md` §4.6). The override *logging* and *rate-threshold recommendation* (`GET /api/learning/override-stats`) are real; the learning-curve chart's specific numbers are not.
 
-What this shows:
-The system doesn't just detect — it orchestrates. Analysts get a prioritized todo list, not a random dump of alerts.
+## 7. Performance (`/performance`)
+
+Financial-impact cards and trend charts from `GET /api/metrics`. Good for the "ROI in rupees, not accuracy points" framing.
+
+## 8. Shadow Mode (`/shadow`)
+
+Not in the original demo script but fully implemented: shows the candidate model scored alongside the primary model, with drift stats (`GET /api/shadow-comparison`). Good talking point for MLOps maturity if a judge asks "how would you roll out a new model safely?" — the honest answer is "this shadow-mode pipeline exists and works, but there's no automatic promotion yet."
+
+## 9. Config (`/config`)
+
+Cost-parameter tuning. Mention there are two backing endpoints (`/api/config`, in-memory; `/api/cost-config`, persisted) if asked about config durability — see `docs/API.md`.
+
+## 10. Audit (`/audit`)
+
+Filterable decision/override log. Good for demonstrating auditability and decision traceability — append-only by convention (no delete route exists on `AuditLog`).
 
 ---
 
-## 6. Override Learning
+## Pre-demo checklist
 
-**URL**: http://localhost:5173/learning
-**Or**: Click "Override Learning" in sidebar
-
-What you'll see:
-- Before/After toggle — click to switch between model versions
-- 4 metric cards — Accuracy, Precision, Recall, F1 (percentages change)
-- Learning curve chart — area chart showing accuracy improvement over 14 days
-- Metrics improve when toggling to "After Overrides"
-
-Try this:
-Click the toggle button. Watch the 4 metric numbers animate from ~82% to ~91%.
-
-What this shows:
-The active learning loop. Every analyst override makes the next decision better.
-
----
-
-## 7. Performance Dashboard
-
-**URL**: http://localhost:5173/performance
-**Or**: Click "Performance" in sidebar
-
-What you'll see:
-- 3 financial impact cards — Fraud Prevented, FP Revenue Saved, Total Savings
-- Fraud vs FP trend chart — dual area chart over 14 days
-- Decision distribution donut — ALLOW, VERIFY, REVIEW, BLOCK breakdown
-- Color-coded legend
-
-What this shows:
-ROI in rupees. Not accuracy percentages — actual money saved.
-
----
-
-## 8. System Configuration
-
-**URL**: http://localhost:5173/config
-**Or**: Click "System Config" in sidebar
-
-What you'll see:
-- 5 slider controls — Fraud Threshold, FP Threshold, Review Cost, Fraud Multiplier, LTV Weight
-- Real-time value display — number updates as you drag
-- Save button — gradient button with hover glow
-- Reset button — reverts to defaults
-
-Try this:
-Drag the Fraud Threshold slider from 0.72 to 0.85. Click Save. Toast confirms.
-
-What this shows:
-Different merchants have different risk appetites. TieBreaker is configurable, not one-size-fits-all.
-
----
-
-## 9. Audit Trail
-
-**URL**: http://localhost:5173/audit
-**Or**: Click "Audit Trail" in sidebar
-
-What you'll see:
-- Filterable table — filter by transaction ID or action
-- Colored action badges — green ALLOW, red BLOCK, amber REVIEW, cyan VERIFY
-- Analyst attribution — shows who made each override
-- Model version tracking — every decision tagged with v2.0.0
-- Reason field — shows WHY overrides happened
-
-Try this:
-Type "REVIEW" in the filter box. Only REVIEW actions remain.
-
-What this shows:
-SOC 2 readiness. Regulators and auditors need this. Razorpay needs this.
-
----
-
-## 10. Status Bar
-
-Visible on every dashboard page (bottom of screen)
-
-What you'll see:
-- API latency — updates every second (random 5-25ms)
-- Model version — shows v2.0.0
-- Live clock — IST timezone
-
-What this shows:
-Small detail, big impact. Makes the dashboard feel like real infrastructure, not a mockup.
-
----
-
-## Known Limitations
-
-1. Models are mocked — we use realistic probability distributions, not trained XGBoost models (would need 6+ months of labeled transaction data)
-2. No real Razorpay integration in demo — the /api/create-order endpoint falls back to mock data when Razorpay credentials aren't configured
-3. Single-tenant — multi-merchant federation is designed but not implemented
-
-BUT: The architecture, API contracts, and UI are production-ready. Drop in real models + Razorpay keys and it works.
-
----
-
-## Documentation
-
-| File | Purpose |
-|------|---------|
-| README.md | Project overview, quick start, business impact |
-| ARCHITECTURE.md | Deep system design, data flow, DB schema, cost model |
-| API.md | Full REST API documentation with examples |
-| PITCH.md | Presentation script with Q&A prep |
-| DEMO.md | This file — feature walkthrough |
-
----
-
-Razorpay Buildathon 2026 — TieBreaker Team
+- [ ] `GET /health` → `ml.fraud_model_loaded: true`, `ml.fp_model_loaded: true`
+- [ ] `POST /api/demo/seed-decisions` run once so Queue/Command Center have data
+- [ ] Razorpay Test Mode credentials configured and `POST /api/payment/create-order` successfully creates a test order
+- [ ] Know the transaction-detail route bug (§3) and have the What-If path ready as the fallback
+- [ ] Decide in advance whether you're demoing `/checkout` (payments plumbing) or What-If/Command Center (cost engine) for the "counterintuitive" story — don't conflate them live

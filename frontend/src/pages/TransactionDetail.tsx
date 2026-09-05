@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { useParams, useNavigate } from 'react-router-dom'
-import { API_URL } from '../config'
+import { API_URL, apiHeaders } from '../config'
 import AppSidebar from '../components/AppSidebar'
 import StatusBar from '../components/StatusBar'
 import TransactionPipeline from '../components/TransactionPipeline'
@@ -20,7 +20,7 @@ export default function TransactionDetail() {
   const [overrideReason, setOverrideReason] = useState('')
 
   useEffect(() => {
-    fetch(`${API_URL}/api/transaction/${id}`)
+    fetch(`${API_URL}/api/transactions/${id}`, { headers: apiHeaders() })
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(d => setTx(d))
       .catch(() => {

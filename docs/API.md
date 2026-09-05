@@ -1,453 +1,254 @@
-# TieBreaker API Documentation
+# TieBreaker — API Reference
 
-Base URL: `http://localhost:8000`
-Content-Type: `application/json`
-Version: 2.0.0
+Base URL (local): `http://localhost:8000`
+Base URL (production): the Railway backend URL behind `https://tie-breaker-pi.vercel.app`
+Content-Type: `application/json` unless noted.
+
+This document only lists endpoints that exist in `backend/app/routes/` today. Every request/response shape below is taken directly from the Pydantic models and route handlers, not reconstructed from memory — if you change a route, update this file in the same PR, or it'll rot exactly like the version this replaced.
 
 ---
 
 ## Authentication
 
-All endpoints require a Bearer token:
+Most mutating and scoring endpoints require:
 
 ```
-Authorization: Bearer <jwt_token>
+X-API-Key: <your key>
+```
+
+- **Required in production** (`ENVIRONMENT=production`) — the app refuses to start serving these routes unauthenticated.
+- **No-op in local/dev** if `TIEBREAKER_API_KEY` is unset — useful for `pytest` and local hacking, don't rely on it for anything real.
+- Not JWT, not OAuth. One shared key, no expiry, no per-user identity.
+
+Endpoints that do **not** require `X-API-Key`: `GET /`, `GET /health`, `GET /api/config` (read), `POST /api/payment/create-order`, `POST /api/payment/verify`, and `POST /api/webhooks/razorpay` (authenticated via Razorpay HMAC signature).
+
+Rate limits (keyed by API key, IP fallback): **100/min** on `POST /api/transactions`, **20/min** on `POST /api/what-if`.
+
+---
+
+## Health & root
+
+**GET /** → service identity, no auth.
+```json
+{"status": "ready", "project": "TieBreaker", "service": "tiebreaker", "version": "2.0.0", "phase": "production"}
+```
+
+**GET /health** → composite health, no auth. `status` is `"degraded"` if ML artifacts failed to load *or* Redis is unreachable — check this before a demo.
+```json
+{
+  "status": "ok",
+  "version": "2.0.0",
+  "environment": "development",
+  "ml": {"fraud_model_loaded": true, "fp_model_loaded": true, "fraud_metrics": {}, "fp_metrics": {}},
+  "velocity_engine": {"redis_connected": true},
+  "degraded_reasons": []
+}
 ```
 
 ---
 
-## Endpoints
+## Risk decisioning (the Strike Decision Engine)
 
-### 1. Create Order and Score
+### POST /api/transactions
+Scores a transaction through the full cost-optimizing engine. **Requires `X-API-Key`.** 100/min.
 
-Creates a Razorpay order and runs the full risk scoring pipeline.
-
-**POST /api/create-order**
-
-Request:
+Request (`TransactionRequest`):
 ```json
 {
-  "amount": 50000,
-  "currency": "INR",
+  "transaction_id": "TXN-001",
   "customer_id": "cust_123",
-  "email": "user@example.com",
-  "phone": "9999999999",
-  "payment_method": "upi",
-  "device_id": "device_abc123"
-}
-```
-
-Response:
-```json
-{
-  "order_id": "order_LxK9mN2pQr",
-  "transaction_id": "pay_MnP2qR5sTu",
-  "amount": 50000,
-  "currency": "INR",
-  "recommended_action": "REVIEW",
-  "fraud_probability": 0.72,
-  "fp_probability": 0.35,
-  "is_counterintuitive": true,
-  "velocity_flags": ["HIGH_FREQUENCY", "NEW_DEVICE"],
-  "shap_explanation": {
-    "amount": 0.25,
-    "velocity": 0.18,
-    "device": 0.15,
-    "merchant": 0.12,
-    "time": 0.10,
-    "location": 0.08,
-    "history": 0.07,
-    "channel": 0.05
-  },
-  "expected_losses": {
-    "ALLOW": 112500,
-    "VERIFY": 45600,
-    "REVIEW": 28400,
-    "BLOCK": 67500
-  },
-  "model_version": "2.0.0",
-  "latency_ms": 28
-}
-```
-
-Actions:
-- `ALLOW` — Low risk, proceed with payment
-- `VERIFY` — Medium risk, send OTP/SMS verification
-- `REVIEW` — High risk but high LTV, queue for analyst
-- `BLOCK` — High risk, reject transaction
-
----
-
-### 2. Get System Metrics
-
-Returns real-time system performance and financial impact.
-
-**GET /api/metrics**
-
-Response:
-```json
-{
-  "system_stats": {
-    "total_decisions": 1247,
-    "total_transactions": 5234,
-    "override_rate": 3.2,
-    "avg_review_time_minutes": 4.2,
-    "active_models": 2,
-    "queue_depth": 12
-  },
-  "financial_impact": {
-    "fraud_loss_prevented": 2840000,
-    "fp_revenue_saved": 1250000,
-    "analyst_cost": 45000,
-    "net_savings": 4045000
-  },
-  "model_performance": {
-    "fraud_model": {
-      "precision": 0.89,
-      "recall": 0.87,
-      "f1": 0.88,
-      "auc_roc": 0.94,
-      "samples": 45231
-    },
-    "fp_model": {
-      "precision": 0.82,
-      "recall": 0.79,
-      "f1": 0.80,
-      "auc_roc": 0.89,
-      "samples": 28450
-    }
-  },
-  "override_distribution": {
-    "ALLOW": 35,
-    "VERIFY": 25,
-    "REVIEW": 30,
-    "BLOCK": 10
-  },
-  "timestamp": "2024-01-15T14:30:00Z"
-}
-```
-
----
-
-### 3. Get Review Queue
-
-Returns priority-ranked transactions awaiting analyst review.
-
-**GET /api/queue**
-
-Query Parameters:
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| limit | int | 50 | Max items to return |
-| status | string | pending | Filter by status |
-
-Response:
-```json
-{
-  "cases": [
-    {
-      "transaction_id": "pay_LxK9mN2pQr",
-      "amount": 45000,
-      "fraud_probability": 0.72,
-      "fp_probability": 0.35,
-      "recommended_action": "REVIEW",
-      "impact_score": 92,
-      "waiting_seconds": 45,
-      "velocity_flags": ["HIGH_FREQUENCY"],
-      "customer_ltv": 150000,
-      "created_at": "2024-01-15T14:23:01Z"
-    }
-  ],
-  "total": 12,
-  "avg_wait_seconds": 180
-}
-```
-
-Impact Score Formula:
-```
-impact_score = (fraud_probability * 40) + 
-               (amount / max_amount * 30) + 
-               (ltv / max_ltv * 20) + 
-               (waiting_seconds / 300 * 10)
-```
-
----
-
-### 4. Get Transaction Detail
-
-Deep dive into a specific transaction with full decision trace.
-
-**GET /api/transaction/{transaction_id}**
-
-Response:
-```json
-{
-  "transaction_id": "pay_LxK9mN2pQr",
   "amount": 45000,
-  "currency": "INR",
-  "customer_id": "cust_123",
+  "ltv": 300000,
+  "merchant_category": "Retail",
+  "device_change_flag": 0,
+  "geo_mismatch_flag": 0,
+  "is_cross_border": 0,
+  "hour_of_day": 14,
+  "customer_tenure_days": 365,
+  "customer_tx_count_30d": 10,
+  "customer_refund_rate": 0.0,
+  "payment_method": "upi",
+  "device_id": "device_abc"
+}
+```
+`transaction_id` must be unique — re-submitting one returns **409**. Velocity (`velocity_1h`/`velocity_24h`) is looked up from Redis server-side, not supplied by the caller.
+
+Response:
+```json
+{
+  "transaction_id": "TXN-001",
+  "recommended_action": "REVIEW",
+  "baseline_action": "BLOCK",
   "fraud_probability": 0.72,
   "fp_probability": 0.35,
-  "recommended_action": "REVIEW",
+  "savings_vs_baseline": 39100.0,
   "is_counterintuitive": true,
-  "velocity_flags": ["HIGH_FREQUENCY", "NEW_DEVICE"],
-  "shap": {
-    "amount": 0.25,
-    "velocity": 0.18,
-    "device": 0.15,
-    "merchant": 0.12,
-    "time": 0.10,
-    "location": 0.08,
-    "history": 0.07,
-    "channel": 0.05
-  },
-  "timeline": [
-    {
-      "stage": "Payment Captured",
-      "timestamp": "2024-01-15T14:23:01.000Z",
-      "duration_ms": 0,
-      "detail": "UPI transaction initiated"
-    },
-    {
-      "stage": "Velocity Check",
-      "timestamp": "2024-01-15T14:23:01.120Z",
-      "duration_ms": 120,
-      "detail": "12 transactions in last hour"
-    },
-    {
-      "stage": "Fraud Inference",
-      "timestamp": "2024-01-15T14:23:01.280Z",
-      "duration_ms": 160,
-      "detail": "Probability: 0.72 (High Risk)"
-    },
-    {
-      "stage": "FP Inference",
-      "timestamp": "2024-01-15T14:23:01.310Z",
-      "duration_ms": 30,
-      "detail": "Probability: 0.35 (Medium)"
-    },
-    {
-      "stage": "Strike Engine",
-      "timestamp": "2024-01-15T14:23:01.340Z",
-      "duration_ms": 30,
-      "detail": "Cost-optimized: REVIEW"
-    }
-  ],
-  "expected_losses": {
-    "ALLOW": 112500,
-    "VERIFY": 45600,
-    "REVIEW": 28400,
-    "BLOCK": 67500
-  },
-  "model_version": "2.0.0"
+  "velocity": {"velocity_1h": 2, "velocity_24h": 5, "device_tx_count_1h": 1, "source": "redis"},
+  "velocity_source": "redis",
+  "model_version": "xgb-v6"
 }
 ```
+
+### GET /api/transactions
+Last 100 decisions (most recent first). **Requires `X-API-Key`.** Seeds one demo row if the table is empty.
+
+### GET /api/transactions/{transaction_id}
+Full detail: losses for all four actions, SHAP drivers, override info if any. **Requires `X-API-Key`.**
+
+### POST /api/transactions/{transaction_id}/override
+Analyst override. **Requires `X-API-Key`.**
+```json
+{"action": "ALLOW", "reason": "Customer verified via phone call", "analyst_id": "analyst_001"}
+```
+`action` must be one of `ALLOW`/`VERIFY`/`REVIEW`/`BLOCK` or **400**. Unknown transaction → **404**.
+
+### GET /api/transactions/{transaction_id}/shap-chart
+Server-rendered SHAP waterfall plot for the transaction's stored feature snapshot. **Requires `X-API-Key`.** Returns `{"transaction_id", "chart_base64", "format": "png"}`.
+
+### POST /api/what-if
+Simulate a decision without persisting anything — for demos, analyst training, or sensitivity checks. **Requires `X-API-Key`.** 20/min.
+
+Same feature fields as `TransactionRequest` (minus `transaction_id`/`customer_id`), plus optional `override_fraud_prob` / `override_fp_prob` (each 0–1) to bypass live model inference for either side independently. Response includes `model_inference`, `decision`, `financial_analysis` (losses for all four actions + savings), and `parameter_sensitivity` (how the decision shifts under ±20% LTV/amount).
 
 ---
 
-### 5. Submit Analyst Override
+## Orders, payments & Razorpay integration
 
-Analyst overrides the model's recommendation.
+### POST /api/create-order
 
-**POST /api/transaction/{transaction_id}/override**
-
-Request:
+Legacy alias for the Razorpay order creation endpoint. Prefer `POST /api/payment/create-order` for new integrations.
 ```json
-{
-  "action": "ALLOW",
-  "reason": "Customer verified via phone call",
-  "analyst_id": "analyst_001"
-}
+{"amount": 50000, "currency": "INR", "receipt": "rcpt_1", "notes": {}}
+```
+`amount` is in paise. Injects `notes.requires_3ds = "true"` when `fraud_probability > 0.7`. Returns `order_id`, `recommended_action`, `fraud_prob`, `fp_prob`, `requires_3ds`, `key_id`.
+
+### GET /api/orders
+All orders, no auth.
+
+### POST /api/payment/create-order
+What the live `/checkout` demo page actually calls. Requires Razorpay credentials configured server-side (**503** otherwise). Returns `order_id`, `amount`, `currency`, `key_id` for the Razorpay Checkout.js modal.
+
+### POST /api/payment/verify
+Verifies the Checkout.js response signature (`HMAC-SHA256("order_id|payment_id")`) — **mandatory**, returns **400** on mismatch — then re-runs the threshold decision and persists a `Payment` + `Decision`.
+```json
+{"razorpay_order_id": "order_xxx", "razorpay_payment_id": "pay_xxx", "razorpay_signature": "..."}
 ```
 
-Response:
-```json
-{
-  "success": true,
-  "transaction_id": "pay_LxK9mN2pQr",
-  "original_action": "REVIEW",
-  "override_action": "ALLOW",
-  "analyst_id": "analyst_001",
-  "timestamp": "2024-01-15T14:35:00Z"
-}
-```
-
----
-
-### 6. Get Audit Trail
-
-Returns full decision and override history.
-
-**GET /api/audit**
-
-Query Parameters:
-| Param | Type | Description |
-|-------|------|-------------|
-| start_date | ISO date | Filter from date |
-| end_date | ISO date | Filter to date |
-| action | string | Filter by action type |
-| analyst_id | string | Filter by analyst |
-
-Response:
-```json
-{
-  "logs": [
-    {
-      "id": "audit_001",
-      "timestamp": "2024-01-15T14:23:01Z",
-      "transaction_id": "pay_LxK9mN2pQr",
-      "action": "DECISION_REVIEW",
-      "analyst_id": null,
-      "reason": null,
-      "model_version": "2.0.0"
-    },
-    {
-      "id": "audit_002",
-      "timestamp": "2024-01-15T14:35:00Z",
-      "transaction_id": "pay_LxK9mN2pQr",
-      "action": "OVERRIDE_ALLOW",
-      "analyst_id": "analyst_001",
-      "reason": "Customer verified via phone call",
-      "model_version": "2.0.0"
-    }
-  ],
-  "total": 1247,
-  "page": 1,
-  "per_page": 50
-}
-```
-
----
-
-### 7. Get Learning Insights
-
-Returns before/after metrics showing model improvement from overrides.
-
-**GET /api/insights**
-
-Response:
-```json
-{
-  "before": {
-    "accuracy": 0.82,
-    "precision": 0.79,
-    "recall": 0.74,
-    "f1": 0.76,
-    "samples": 10000
-  },
-  "after": {
-    "accuracy": 0.91,
-    "precision": 0.89,
-    "recall": 0.87,
-    "f1": 0.88,
-    "samples": 15000
-  },
-  "learning_curve": [
-    { "day": "D1", "accuracy": 0.76, "precision": 0.74, "samples": 100 },
-    { "day": "D2", "accuracy": 0.77, "precision": 0.75, "samples": 250 }
-  ],
-  "override_stats": {
-    "total_overrides": 142,
-    "override_by_action": {
-      "ALLOW": 45,
-      "BLOCK": 32,
-      "REVIEW": 38,
-      "VERIFY": 27
-    },
-    "override_accuracy": 0.84
-  }
-}
-```
-
----
-
-### 8. Get / Update Configuration
-
-System parameter tuning.
-
-**GET /api/config**
-
-Response:
-```json
-{
-  "fraud_threshold": 0.72,
-  "fp_threshold": 0.35,
-  "review_cost": 100,
-  "fraud_multiplier": 2.5,
-  "ltv_weight": 0.15,
-  "model_version": "2.0.0",
-  "last_updated": "2024-01-15T10:00:00Z",
-  "updated_by": "admin"
-}
-```
-
-**POST /api/config**
-
-Request:
-```json
-{
-  "fraud_threshold": 0.75,
-  "fp_threshold": 0.30,
-  "review_cost": 120
-}
-```
-
-Response:
-```json
-{
-  "success": true,
-  "changes": {
-    "fraud_threshold": { "old": 0.72, "new": 0.75 },
-    "fp_threshold": { "old": 0.35, "new": 0.30 },
-    "review_cost": { "old": 100, "new": 120 }
-  },
-  "timestamp": "2024-01-15T14:40:00Z"
-}
-```
-
----
-
-## Error Codes
-
-| Code | Meaning | Example |
-|------|---------|---------|
-| 400 | Bad Request | Invalid amount format |
-| 401 | Unauthorized | Missing/invalid JWT |
-| 404 | Not Found | Transaction not found |
-| 429 | Rate Limited | >100 req/min |
-| 500 | Server Error | Model inference failed |
+### GET /api/payments
+Query params: `status`, `method`, `limit` (default 50, max 200). No auth.
 
 ---
 
 ## Webhooks
 
-TieBreaker can send webhooks to your endpoint.
+### POST /api/webhooks/razorpay
+Receives Razorpay webhook deliveries. Verified via `X-Razorpay-Signature` (HMAC-SHA256 of the raw body against `RAZORPAY_WEBHOOK_SECRET`) — missing secret or bad signature → **400**. Deduplicated on `X-Razorpay-Event-Id` (idempotent replay). Processing (updating `Payment`/`Order`/`Decision.outcome` for `payment.captured`, `payment.authorized`, `payment.failed`, `refund.processed`, `order.paid`) happens as a background task after a `202`-style accept.
 
-### Decision Webhook
+### GET /api/webhooks
+Paginated (`skip`, `limit`) webhook event log. **Requires `X-API-Key`.**
 
-```json
-{
-  "event": "transaction.decision",
-  "transaction_id": "pay_MnP2qR5sTu",
-  "decision": "REVIEW",
-  "fraud_probability": 0.72,
-  "timestamp": "2024-01-15T14:23:01Z"
-}
-```
-
-### Override Webhook
-
-```json
-{
-  "event": "transaction.override",
-  "transaction_id": "pay_MnP2qR5sTu",
-  "original_decision": "REVIEW",
-  "override_decision": "ALLOW",
-  "analyst_id": "analyst_001",
-  "timestamp": "2024-01-15T14:35:00Z"
-}
-```
+### GET /api/webhooks/{event_id}
+Single event detail. **Requires `X-API-Key`.** **404** if unknown.
 
 ---
 
-API version 2.0.0 — Razorpay Buildathon 2026
+## Queue
+
+### GET /api/queue
+Priority-ranked review queue. Query params: `limit` (default 50), `min_fraud_prob`. No auth. If the `decisions` table is empty, returns synthetic demo cases (clearly tagged `"source": "demo"` in the response) so the UI has something to render before real traffic exists; otherwise `"source": "database"`. Ranked by `impact_score = (loss_of_ALLOW − loss_of_REVIEW) / fixed_review_time`.
+
+---
+
+## Shadow mode
+
+### POST /api/shadow-score
+Scores a transaction through the candidate/shadow fraud model for drift comparison. **Requires `X-API-Key`.** Never affects the live decision — purely persisted for `GET /api/shadow-comparison`.
+```json
+{"transaction_id": "TXN-001", "fraud_probability": 0.42, "recommended_action": "ALLOW", "...features used by the shadow model...": 0}
+```
+
+### GET /api/shadow-comparison
+**Requires `X-API-Key`.** Query: `limit` (default 100, max 1000). Returns recent primary-vs-shadow pairs plus aggregate drift stats (`primary_mean`, `shadow_mean`, `mean_abs_delta`, `flip_rate` — how often the shadow model would flip the 0.5 decision boundary vs. the primary).
+
+---
+
+## Metrics
+
+### GET /api/metrics/model-performance
+Serves `app/ml/artifacts/evaluation_metrics.json`, produced by running `python -m app.ml.evaluation`. If that file doesn't exist yet, returns `{"status": "not_ready", "message": "Run ml/evaluation.py to generate evaluation_metrics.json"}` instead of a 404 — check for this before quoting model numbers live.
+
+### GET /api/metrics
+Live aggregate dashboard numbers from the `decisions`/`overrides` tables (counts, action distribution, override rate, average savings) plus the model's precision/recall/F1 read from the same evaluation file when present.
+
+---
+
+## Insights
+
+### GET /api/insights
+Before/after learning-curve data for a dashboard chart. **On an empty database this returns hardcoded illustrative numbers, and even with real overrides the "after" values are a capped formula, not a recomputed model metric** — see `docs/ARCHITECTURE.md` §4.6 before presenting this as measured improvement.
+
+---
+
+## Audit
+
+### GET /api/audit
+Query: `limit` (default 50). No auth. Seeds demo rows if empty.
+
+### GET /api/audit/decisions
+Last 100 decisions in a compact audit-friendly shape. No auth.
+
+---
+
+## Configuration
+
+There are two configuration endpoints. `/api/config` provides runtime in-memory configuration, while `/api/cost-config` provides persistent, auditable configuration backed by PostgreSQL.
+
+### GET/PUT /api/config
+In-memory runtime configuration. Changes reset when the process restarts. `GET` is public; `PUT` requires `X-API-Key`.
+
+### GET/PUT /api/cost-config
+PostgreSQL-backed and versioned through the `config_history` table. `GET` is public; `PUT` requires `X-API-Key`. Use this endpoint for persistent and auditable cost-model configuration.
+
+---
+
+## Learning / override loop
+
+### GET /api/learning/override-stats
+**Requires `X-API-Key`.** All-time and 7-day override rates, top override patterns, and whether retraining is recommended (>15% all-time or >10% in the last 7 days).
+
+### GET /api/learning/override-feedback
+**Requires `X-API-Key`.** Query: `limit` (default 50, max 500). Raw override + linked decision feature snapshots — the shape a retraining pipeline would actually consume.
+
+### POST /api/learning/trigger-retrain
+**Requires `X-API-Key`.** Reports whether retraining looks warranted and what it would involve. **Does not retrain anything** — see `docs/ARCHITECTURE.md` §4.6.
+
+---
+
+## Demo / dev-data helpers (`app/routes/demo.py`)
+
+Used by the frontend's demo store to generate plausible-looking transactions without hammering the real models on every keystroke. Not part of the risk-decisioning contract — don't build integrations against these.
+
+- `GET /api/demo/transaction` — one synthetic transaction, scored.
+- `GET /api/demo/counterintuitive` — biased toward generating a counterintuitive case (high fraud prob, high LTV).
+- `GET /api/demo/stream` — a batch of synthetic scored transactions.
+- `POST /api/demo/seed-decisions` — writes synthetic `Decision` rows to the database for local/demo environments only. This endpoint should not be enabled for production use.
+
+## Streaming
+
+### GET /api/stream/transactions
+Server-Sent Events. **Requires `X-API-Key`.** Query: `delay_ms` (100–10000, default 1800). Replays recent decisions as a live-looking ticker for the Command Center demo — it's driving synthetic pacing over real stored decisions, not a live production feed.
+
+---
+
+## Error codes
+
+| Code | When |
+|---|---|
+| 400 | Bad payload, invalid action/config key, missing/invalid webhook signature |
+| 401 | Missing or wrong `X-API-Key` |
+| 404 | Transaction / webhook event not found |
+| 409 | `transaction_id` already scored |
+| 422 | Pydantic validation failure (e.g. `amount <= 0`) |
+| 429 | Rate limit exceeded |
+| 500 | Model inference failure, unconfigured `TIEBREAKER_API_KEY` in production |
+| 503 | Razorpay credentials not configured |

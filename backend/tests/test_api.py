@@ -22,7 +22,7 @@ def test_config_endpoint(client):
 
 
 def test_transactions_list(client):
-    response = client.get('/api/transactions')
+    response = client.get('/api/transactions', headers={'X-API-Key': 'tiebreaker-local-dev-key'})
     assert response.status_code == 200
     data = response.json()
     assert isinstance(data, list)
@@ -60,6 +60,6 @@ def test_override_endpoint(client):
         'action': 'BLOCK',
         'reason': 'Suspicious velocity pattern',
         'analyst_id': 'test_analyst'
-    })
+    }, headers={'X-API-Key': 'tiebreaker-local-dev-key'})
     assert response.status_code == 200
     assert response.json()['status'] == 'overridden'
