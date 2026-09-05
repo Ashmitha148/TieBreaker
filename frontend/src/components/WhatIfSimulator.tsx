@@ -1,6 +1,5 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { motion } from 'framer-motion'
-import { API_URL, apiHeaders } from '../config'
 
 interface Props {
   baseAmount: number
@@ -8,48 +7,28 @@ interface Props {
 }
 
 export default function WhatIfSimulator({ baseAmount, baseLtv }: Props) {
-  const [fraudOverride, setFraudOverride] = useState<number | null>(null)
-  const [fpOverride, setFpOverride] = useState<number | null>(null)
-  const [useFraudOverride, setUseFraudOverride] = useState(false)
-  const [useFpOverride, setUseFpOverride] = useState(false)
-  const [result, setResult] = useState<any>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [fraudProb, setFraudProb] = useState(0.5)
+  const [fpProb, setFpProb] = useState(0.2)
 
-  const runSimulation = async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const body: Record<string, unknown> = {
-        amount: baseAmount,
-        ltv: baseLtv,
-      }
-      if (useFraudOverride && fraudOverride !== null) {
-        body.override_fraud_prob = fraudOverride
-      }
-      if (useFpOverride && fpOverride !== null) {
-        body.override_fp_prob = fpOverride
-      }
-      const res = await fetch(`${API_URL}/api/what-if`, {
-        method: 'POST',
-        headers: apiHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify(body),
-      })
-      if (!res.ok) {
-        const detail = await res.text()
-        throw new Error(detail || `HTTP ${res.status}`)
-      }
-      setResult(await res.json())
-    } catch (e: any) {
-      setResult(null)
-      setError(e?.message || 'What-if request failed')
-    } finally {
-      setLoading(false)
+  const result = useMemo(() => {
+    const fraudLoss = fraudProb * baseAmount * 2.5
+    const _fpLoss = fpProb * baseLtv * 0.15
+    void _fpLoss
+    const frictionCost = 0.08 * baseAmount
+    const analystCost = 100
+    const reviewCost = fraudProb * baseAmount * 0.3 + fpProb * baseLtv * 0.05 + analystCost + frictionCost * 0.5
+    const blockCost = fpProb * baseLtv + frictionCost
+
+    const losses = {
+      ALLOW: fraudLoss,
+      VERIFY: fraudProb * baseAmount * 0.6 + frictionCost + fpProb * baseLtv * 0.1,
+      REVIEW: reviewCost,
+      BLOCK: blockCost,
     }
-  }
+    const rec = Object.entries(losses).sort((a, b) => a[1] - b[1])[0][0]
+    return { losses, recommended: rec }
+  }, [fraudProb, fpProb, baseAmount, baseLtv])
 
-  const rec = result?.decision?.recommended_action
-  const losses = result?.financial_analysis?.losses_by_action || {}
   const actionColors: Record<string, string> = {
     ALLOW: 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400',
     VERIFY: 'bg-cyan-500/10 border-cyan-500/25 text-cyan-400',
@@ -60,73 +39,51 @@ export default function WhatIfSimulator({ baseAmount, baseLtv }: Props) {
   return (
     <div className="space-y-6">
       <div>
-        <label className="flex items-center gap-2 text-[12px] mb-2 text-[#94a3b8]">
-          <input type="checkbox" checked={useFraudOverride} onChange={(e) => setUseFraudOverride(e.target.checked)} />
-          Override fraud probability
-        </label>
         <div className="flex justify-between text-[12px] mb-2">
           <span className="text-[#94a3b8]">Fraud Probability</span>
-          <span className="font-mono font-bold text-white">{((fraudOverride ?? 0.5) * 100).toFixed(0)}%</span>
+          <span className="font-mono font-bold text-white">{(fraudProb * 100).toFixed(0)}%</span>
         </div>
         <input
-          type="range" min="0" max="100" value={(fraudOverride ?? 0.5) * 100}
-          disabled={!useFraudOverride}
-          onChange={(e) => setFraudOverride(Number(e.target.value) / 100)}
+          type="range" min="0" max="100" value={fraudProb * 100}
+          onChange={(e) => setFraudProb(Number(e.target.value) / 100)}
           className="w-full h-1.5 bg-white/[0.04] rounded-full appearance-none cursor-pointer accent-[#3395FF]"
         />
+        <div className="flex justify-between text-[9px] text-[#475569] mt-1 font-mono">
+          <span>0%</span><span>50%</span><span>100%</span>
+        </div>
       </div>
 
       <div>
-        <label className="flex items-center gap-2 text-[12px] mb-2 text-[#94a3b8]">
-          <input type="checkbox" checked={useFpOverride} onChange={(e) => setUseFpOverride(e.target.checked)} />
-          Override false-positive probability
-        </label>
         <div className="flex justify-between text-[12px] mb-2">
           <span className="text-[#94a3b8]">False Positive Probability</span>
-          <span className="font-mono font-bold text-white">{((fpOverride ?? 0.2) * 100).toFixed(0)}%</span>
+          <span className="font-mono font-bold text-white">{(fpProb * 100).toFixed(0)}%</span>
         </div>
         <input
-          type="range" min="0" max="50" value={(fpOverride ?? 0.2) * 100}
-          disabled={!useFpOverride}
-          onChange={(e) => setFpOverride(Number(e.target.value) / 100)}
+          type="range" min="0" max="50" value={fpProb * 100}
+          onChange={(e) => setFpProb(Number(e.target.value) / 100)}
           className="w-full h-1.5 bg-white/[0.04] rounded-full appearance-none cursor-pointer accent-[#a855f7]"
         />
       </div>
 
-      <button
-        onClick={runSimulation}
-        disabled={loading}
-        className="w-full py-2.5 rounded-xl bg-[#3395FF]/15 border border-[#3395FF]/30 text-[#3395FF] text-xs font-bold"
-      >
-        {loading ? 'Running…' : 'Run what-if'}
-      </button>
+      <div className="grid grid-cols-2 gap-3">
+        {Object.entries(result.losses).map(([action, loss]) => (
+          <motion.div
+            key={action}
+            animate={{
+              scale: result.recommended === action ? 1.02 : 1,
+              borderColor: result.recommended === action ? 'rgba(51,149,255,0.3)' : 'rgba(255,255,255,0.06)',
+            }}
+            className={`p-3 rounded-xl border ${result.recommended === action ? 'bg-[#3395FF]/5' : 'bg-white/[0.02]'}`}
+          >
+            <div className="text-[10px] text-[#475569] uppercase font-bold">{action}</div>
+            <div className="text-sm font-mono font-bold text-white mt-1">₹{Math.round(loss).toLocaleString('en-IN')}</div>
+          </motion.div>
+        ))}
+      </div>
 
-      {error && <div className="text-[12px] text-rose-400">{error}</div>}
-
-      {result && (
-        <>
-          <div className="text-[11px] text-[#94a3b8] font-mono">
-            fraud={result.model_inference?.fraud_probability} fp={result.model_inference?.fp_probability}
-            {result.model_inference?.partial_override_note ? ` — ${result.model_inference.partial_override_note}` : ''}
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            {Object.entries(losses).map(([action, loss]) => (
-              <motion.div
-                key={action}
-                className={`p-3 rounded-xl border ${rec === action ? 'bg-[#3395FF]/5' : 'bg-white/[0.02]'}`}
-              >
-                <div className="text-[10px] text-[#475569] uppercase font-bold">{action}</div>
-                <div className="text-sm font-mono font-bold text-white mt-1">₹{Math.round(Number(loss)).toLocaleString('en-IN')}</div>
-              </motion.div>
-            ))}
-          </div>
-          {rec && (
-            <div className={`text-center py-2.5 rounded-xl border text-xs font-bold ${actionColors[rec] || ''}`}>
-              Recommended: {rec}
-            </div>
-          )}
-        </>
-      )}
+      <div className={`text-center py-2.5 rounded-xl border text-xs font-bold ${actionColors[result.recommended]}`}>
+        Recommended: {result.recommended}
+      </div>
     </div>
   )
 }

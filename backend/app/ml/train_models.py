@@ -352,19 +352,31 @@ def train_all(max_rows: int | None = None, optuna_trials: int | None = None):
         best_params_f = {**FRAUD_BEST_PARAMS, **{k: v for k, v in opt_params.items()
                                                   if k in FRAUD_BEST_PARAMS}}
 
-    print("Training final fraud model...")
+        print("Training final fraud model...")
     from xgboost import XGBClassifier
+
+    X_fit_f, y_fit_f = X_tr_f, y_tr_f
+    fit_spw = scale_pos_weight
+
+    if os.getenv("TB_FRAUD_SMOTE", "0") == "1":
+        from imblearn.over_sampling import SMOTE
+        print("Applying SMOTE to fraud training data (0.03 -> 0.15 minority ratio)...")
+        smote = SMOTE(sampling_strategy=0.15, random_state=42)
+        X_fit_f, y_fit_f = smote.fit_resample(X_tr_f, y_tr_f)
+        classes, counts = np.unique(y_fit_f, return_counts=True)
+        fit_spw = counts[0] / counts[1]
+        print(f"  Post-SMOTE rows: {len(y_fit_f)}, new scale_pos_weight: {fit_spw:.2f}")
 
     final_params_f = {
         **best_params_f,
-        "scale_pos_weight": scale_pos_weight,
+        "scale_pos_weight": fit_spw,
         "eval_metric": "logloss",
         "random_state": 42,
         "n_jobs": -1,
     }
     base_fraud = XGBClassifier(**final_params_f)
     base_fraud.fit(
-        X_tr_f, y_tr_f,
+        X_fit_f, y_fit_f,
         eval_set=[(X_va_f, y_va_f)],
         verbose=False,
     )

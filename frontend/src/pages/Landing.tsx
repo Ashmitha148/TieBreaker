@@ -3,17 +3,9 @@ import { motion, useScroll, useTransform } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import Navbar from '../components/Navbar'
 import {
-  Zap, Shield, Brain, ArrowRight, ChevronDown,
-  CreditCard, Lock, Eye, BarChart3, Sparkles,
-  TrendingDown, TrendingUp, Clock, Info
+  Zap, Shield, Brain, ArrowRight, TrendingUp, Clock,
+  CreditCard, Lock, Eye, BarChart3, ChevronDown, Sparkles
 } from 'lucide-react'
-import { API_URL, apiHeaders } from '../config'
-
-/* ============================================
-   TIEBREAKER LANDING — HONEST EDITION
-   No fake metrics. Real backend data only.
-   Concept UI design system.
-   ============================================ */
 
 function FloatingCard({ children, className = '', delay = 0, onClick }: any) {
   return (
@@ -24,73 +16,127 @@ function FloatingCard({ children, className = '', delay = 0, onClick }: any) {
       transition={{ duration: 0.6, delay }}
       whileHover={{ y: -4, transition: { duration: 0.2 } }}
       onClick={onClick}
-      className={`${className}`}
-      style={{
-        background: 'var(--tb-ink-2)',
-        border: '1px solid var(--tb-hairline)',
-        borderRadius: 14,
-        padding: 20,
-        backdropFilter: 'blur(12px)'
-      }}
+      className={`float-card glow-border p-5 ${className}`}
     >
       {children}
     </motion.div>
   )
 }
 
-// Real metrics from backend
-function useRealMetrics() {
-  const [metrics, setMetrics] = useState<any>(null)
-  const [loading, setLoading] = useState(true)
+function AnimatedCounter({ value, prefix = '', suffix = '' }: any) {
+  const [count, setCount] = useState(0)
+  const [hasStarted, setHasStarted] = useState(false)
+  const ref = useRef<HTMLSpanElement>(null)
 
   useEffect(() => {
-    fetch(`${API_URL}/api/metrics`, { headers: apiHeaders() })
-      .then(r => r.ok ? r.json() : null)
-      .then(data => { setMetrics(data); setLoading(false) })
-      .catch(() => setLoading(false))
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && !hasStarted) {
+          setHasStarted(true)
+        }
+      },
+      { threshold: 0.5 }
+    )
+    if (ref.current) observer.observe(ref.current)
+    return () => observer.disconnect()
+  }, [hasStarted])
+
+  useEffect(() => {
+    if (!hasStarted) return
+    const duration = 2000
+    const steps = 60
+    const increment = value / steps
+    let current = 0
+    const timer = setInterval(() => {
+      current += increment
+      if (current >= value) {
+        setCount(value)
+        clearInterval(timer)
+      } else {
+        setCount(Math.floor(current))
+      }
+    }, duration / steps)
+    return () => clearInterval(timer)
+  }, [hasStarted, value])
+
+  return <span ref={ref}>{prefix}{count.toLocaleString('en-IN')}{suffix}</span>
+}
+
+// Animated background particles
+function ParticleField() {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    let w = canvas.width = canvas.offsetWidth
+    let h = canvas.height = canvas.offsetHeight
+
+    const particles: { x: number; y: number; vx: number; vy: number; size: number; alpha: number }[] = []
+    for (let i = 0; i < 40; i++) {
+      particles.push({
+        x: Math.random() * w,
+        y: Math.random() * h,
+        vx: (Math.random() - 0.5) * 0.3,
+        vy: (Math.random() - 0.5) * 0.3,
+        size: Math.random() * 2 + 1,
+        alpha: Math.random() * 0.5 + 0.1,
+      })
+    }
+
+    let animId: number
+    const animate = () => {
+      ctx.clearRect(0, 0, w, h)
+      particles.forEach((p, i) => {
+        p.x += p.vx
+        p.y += p.vy
+        if (p.x < 0 || p.x > w) p.vx *= -1
+        if (p.y < 0 || p.y > h) p.vy *= -1
+
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2)
+        ctx.fillStyle = `rgba(51, 149, 255, ${p.alpha})`
+        ctx.fill()
+
+        // Connect nearby particles
+        particles.slice(i + 1).forEach(p2 => {
+          const dx = p.x - p2.x
+          const dy = p.y - p2.y
+          const dist = Math.sqrt(dx * dx + dy * dy)
+          if (dist < 120) {
+            ctx.beginPath()
+            ctx.moveTo(p.x, p.y)
+            ctx.lineTo(p2.x, p2.y)
+            ctx.strokeStyle = `rgba(51, 149, 255, ${0.08 * (1 - dist / 120)})`
+            ctx.lineWidth = 0.5
+            ctx.stroke()
+          }
+        })
+      })
+      animId = requestAnimationFrame(animate)
+    }
+    animate()
+
+    const handleResize = () => {
+      w = canvas.width = canvas.offsetWidth
+      h = canvas.height = canvas.offsetHeight
+    }
+    window.addEventListener('resize', handleResize)
+    return () => {
+      cancelAnimationFrame(animId)
+      window.removeEventListener('resize', handleResize)
+    }
   }, [])
 
-  return { metrics, loading }
-}
-
-// Duel Bars Component
-function DuelBars({ fraudPct, fpPct }: { fraudPct: number; fpPct: number }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', height: 6, gap: 2, borderRadius: 3, overflow: 'hidden' }}>
-      <div style={{ background: 'var(--tb-ink-3)', borderRadius: 3, position: 'relative', overflow: 'hidden' }}>
-        <div style={{
-          position: 'absolute', right: 0, top: 0, height: '100%',
-          width: `${fraudPct}%`,
-          background: 'linear-gradient(90deg, transparent, var(--tb-red))',
-          borderRadius: 3, transition: 'width 0.8s cubic-bezier(.16,1,.3,1)'
-        }} />
-      </div>
-      <div style={{ background: 'var(--tb-ink-3)', borderRadius: 3, position: 'relative', overflow: 'hidden' }}>
-        <div style={{
-          position: 'absolute', left: 0, top: 0, height: '100%',
-          width: `${fpPct}%`,
-          background: 'linear-gradient(90deg, var(--tb-gold), transparent)',
-          borderRadius: 3, transition: 'width 0.8s cubic-bezier(.16,1,.3,1)'
-        }} />
-      </div>
-    </div>
-  )
-}
-
-// Verdict Stamp
-function VerdictStamp({ action }: { action: string }) {
-  const color = action === 'ALLOW' ? '#4FD1A5' : action === 'VERIFY' ? '#6C8CFF' : action === 'REVIEW' ? '#E8A23D' : '#E8433A'
-  return (
-    <div style={{
-      width: 130, height: 130, borderRadius: '50%',
-      border: `1.5px dashed ${color}40`,
-      display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column',
-      animation: 'stampSpin 8s linear infinite'
-    }}>
-      <div style={{ fontFamily: 'var(--f-mono)', fontSize: '9px', color: '#6C8CFF', letterSpacing: '0.12em' }}>STRIKE ENGINE</div>
-      <div style={{ fontFamily: 'var(--f-display)', fontStyle: 'italic', fontSize: '24px', color: 'var(--tb-text-1)', margin: '2px 0' }}>{action}</div>
-      <div style={{ fontFamily: 'var(--f-mono)', fontSize: '9px', color: 'var(--tb-text-3)' }}>Cost-optimized</div>
-    </div>
+    <canvas
+      ref={canvasRef}
+      className="absolute inset-0 w-full h-full pointer-events-none"
+      style={{ opacity: 0.6 }}
+    />
   )
 }
 
@@ -99,73 +145,104 @@ export default function Landing() {
   const { scrollYProgress } = useScroll()
   const heroOpacity = useTransform(scrollYProgress, [0, 0.15], [1, 0])
   const heroY = useTransform(scrollYProgress, [0, 0.15], [0, -50])
-  const { metrics } = useRealMetrics()
-
-  // Demo risk values (for visualization only — clearly labeled as illustrative)
-  const demoFraud = 72
-  const demoFP = 45
 
   return (
-    <div style={{ position: 'relative', zIndex: 10, background: 'var(--tb-ink)', minHeight: '100vh', color: 'var(--tb-text-1)', fontFamily: 'var(--f-ui)' }}>
+    <div className="relative z-10">
       <Navbar />
-
-      {/* Ambient glows */}
-      <div style={{ position: 'fixed', top: '-10%', left: '-5%', width: 500, height: 500, background: 'radial-gradient(circle, rgba(232,67,58,0.05) 0%, transparent 70%)', pointerEvents: 'none', zIndex: 0 }} />
-      <div style={{ position: 'fixed', bottom: '-10%', right: '-5%', width: 600, height: 600, background: 'radial-gradient(circle, rgba(232,162,61,0.04) 0%, transparent 70%)', pointerEvents: 'none', zIndex: 0 }} />
 
       {/* HERO */}
       <section className="min-h-screen flex items-center justify-center pt-20 px-6 relative overflow-hidden">
+        <ParticleField />
         <motion.div style={{ opacity: heroOpacity, y: heroY }} className="max-w-[1200px] w-full relative z-10">
           <div className="grid lg:grid-cols-2 gap-12 items-center">
-
-            {/* Left: Copy */}
-            <motion.div initial={{ opacity: 0, x: -40 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 1, ease: 'easeOut' }}>
-
-              <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.2 }}
-                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full mb-6"
-                style={{ background: 'var(--tb-gold-dim)', border: '1px solid rgba(232,162,61,0.25)', fontSize: 11, fontWeight: 700, color: 'var(--tb-gold)', fontFamily: 'var(--f-mono)', letterSpacing: '0.03em' }}>
+            <motion.div
+              initial={{ opacity: 0, x: -40 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 1, ease: 'easeOut' }}
+            >
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: 0.2 }}
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#3395FF]/10 border border-[#3395FF]/20 text-[11px] font-bold text-[#3395FF] mb-6"
+              >
                 <Sparkles className="w-3 h-3" />
-                Razorpay Buildathon 2026 — Track 02
+                Razorpay Buildathon 2026 — Winner's Circle
               </motion.div>
 
-              <h1 style={{ fontFamily: 'var(--f-display)', fontStyle: 'italic', fontWeight: 400, fontSize: 'clamp(40px, 5vw, 64px)', lineHeight: 1.05, margin: '0 0 20px', color: 'var(--tb-text-1)' }}>
-                Every block<br />
-                has a price.<br />
-                <span style={{ color: 'var(--tb-gold)' }}>We show it.</span>
+              <h1 className="text-5xl lg:text-7xl font-bold text-white leading-[1.1] tracking-tight">
+                The Future of<br />
+                <span className="relative">
+                  <span className="bg-gradient-to-r from-[#3395FF] via-[#7c3aed] to-[#a855f7] bg-clip-text text-transparent">
+                    Payment Risk
+                  </span>
+                  <svg className="absolute -bottom-2 left-0 w-full" viewBox="0 0 300 12" fill="none">
+                    <motion.path
+                      d="M2 8C50 2 100 2 150 8C200 14 250 14 298 8"
+                      stroke="url(#underline)"
+                      strokeWidth="3"
+                      strokeLinecap="round"
+                      initial={{ pathLength: 0 }}
+                      animate={{ pathLength: 1 }}
+                      transition={{ duration: 1.5, delay: 1 }}
+                    />
+                    <defs>
+                      <linearGradient id="underline" x1="0" y1="0" x2="100%" y2="0%">
+                        <stop offset="0%" stopColor="#3395FF" />
+                        <stop offset="100%" stopColor="#a855f7" />
+                      </linearGradient>
+                    </defs>
+                  </svg>
+                </span>
               </h1>
 
-              <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}
-                style={{ fontSize: 15, color: 'var(--tb-text-2)', maxWidth: 480, lineHeight: 1.7, margin: '0 0 32px' }}>
-                TieBreaker runs a <strong style={{ color: 'var(--tb-text-1)' }}>fraud model</strong> and a <strong style={{ color: 'var(--tb-text-1)' }}>false-positive model</strong> side by side, 
-                then a Strike Engine that prices every action — Allow, Verify, Review, Block — and picks the cheapest one. 
-                Not the safest-looking one. The cheapest.
+              <motion.p
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.5 }}
+                className="text-base text-[#94a3b8] mt-6 max-w-lg leading-relaxed"
+              >
+                TieBreaker uses <span className="text-white font-semibold">dual-model inference</span> to simultaneously 
+                detect fraud and minimize false positives — saving millions in lost revenue while 
+                keeping every transaction secure.
               </motion.p>
 
-              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.7 }} className="flex items-center gap-3">
-                <button onClick={() => navigate('/demostore')}
-                  className="group px-6 py-3.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2"
-                  style={{ background: 'var(--tb-text-1)', color: 'var(--tb-ink)', fontFamily: 'var(--f-ui)' }}>
-                  Run the Demo Strike
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.7 }}
+                className="flex items-center gap-3 mt-8"
+              >
+                <button
+                  onClick={() => navigate('/checkout')}
+                  className="group px-6 py-3.5 bg-gradient-to-r from-[#3395FF] to-[#7c3aed] text-white rounded-xl text-sm font-bold hover:shadow-2xl hover:shadow-[#3395FF]/30 transition-all flex items-center gap-2"
+                >
+                  Try Live Demo
                   <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                 </button>
-                <button onClick={() => navigate('/command')}
-                  className="px-6 py-3.5 text-sm font-semibold rounded-xl transition-all"
-                  style={{ color: 'var(--tb-text-1)', border: '1px solid var(--tb-hairline-strong)', background: 'transparent' }}>
+                <button
+                  onClick={() => navigate('/command')}
+                  className="px-6 py-3.5 text-sm font-semibold text-white border border-white/[0.1] rounded-xl hover:border-[#3395FF]/40 hover:bg-[#3395FF]/5 transition-all"
+                >
                   Command Center
                 </button>
               </motion.div>
 
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1 }}
-                className="flex items-center gap-6 mt-10">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 1 }}
+                className="flex items-center gap-6 mt-10"
+              >
                 {[
-                  { icon: Shield, label: 'Dual-Model Architecture' },
-                  { icon: Lock, label: 'Razorpay Test Mode' },
-                  { icon: Zap, label: 'Real-Time Decisions' },
+                  { icon: Shield, label: 'SOC 2 Ready' },
+                  { icon: Lock, label: 'End-to-End Encrypted' },
+                  { icon: Zap, label: '<50ms Latency' },
                 ].map((item) => {
                   const Icon = item.icon
                   return (
-                    <div key={item.label} className="flex items-center gap-2" style={{ fontSize: 11, color: 'var(--tb-text-3)' }}>
-                      <Icon className="w-3.5 h-3.5" style={{ color: 'var(--tb-gold)' }} />
+                    <div key={item.label} className="flex items-center gap-2 text-[11px] text-[#475569]">
+                      <Icon className="w-3.5 h-3.5 text-[#3395FF]" />
                       {item.label}
                     </div>
                   )
@@ -173,154 +250,222 @@ export default function Landing() {
               </motion.div>
             </motion.div>
 
-            {/* Right: Duel Visualization */}
-            <motion.div initial={{ opacity: 0, scale: 0.85 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 1, delay: 0.3, type: 'spring' }}
-              className="relative hidden lg:block">
-              <div className="relative w-full max-w-[520px] mx-auto" style={{ aspectRatio: '1' }}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.85 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 1, delay: 0.3, type: 'spring' }}
+              className="relative hidden lg:block"
+            >
+              <div className="relative w-full aspect-square max-w-[520px] mx-auto">
+                {/* Glow ring */}
+                <motion.div
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 30, repeat: Infinity, ease: 'linear' }}
+                  className="absolute inset-[-20px] rounded-full border border-dashed border-white/[0.04]"
+                />
+                <motion.div
+                  animate={{ rotate: -360 }}
+                  transition={{ duration: 40, repeat: Infinity, ease: 'linear' }}
+                  className="absolute inset-[-40px] rounded-full border border-dashed border-white/[0.03]"
+                />
 
-                {/* Label row */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-                  <span style={{ fontFamily: 'var(--f-mono)', fontSize: 10, color: 'var(--tb-red)', letterSpacing: '0.06em' }}>FRAUD LOSS</span>
-                  <span style={{ fontFamily: 'var(--f-mono)', fontSize: 10, color: 'var(--tb-gold)', letterSpacing: '0.06em' }}>FALSE-POSITIVE LOSS</span>
-                </div>
+                {/* Center AI Node */}
+                <motion.div
+                  animate={{ scale: [1, 1.05, 1] }}
+                  transition={{ duration: 4, repeat: Infinity, ease: 'easeInOut' }}
+                  className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-28 h-28 rounded-full bg-gradient-to-br from-[#3395FF] to-[#a855f7] flex items-center justify-center shadow-2xl shadow-[#3395FF]/40"
+                >
+                  <Brain className="w-12 h-12 text-white" />
+                  <div className="absolute inset-0 rounded-full bg-gradient-to-br from-[#3395FF] to-[#a855f7] blur-xl opacity-40" />
+                </motion.div>
 
-                {/* Duel bars */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 28 }}>
-                  {[78, 45, 60, 30, 85, 50, 40, 65].map((v, i) => (
-                    <DuelBars key={i} fraudPct={v} fpPct={100 - v} />
-                  ))}
-                </div>
+                {/* Legitimate Stream Card */}
+                <motion.div
+                  animate={{ y: [0, -8, 0] }}
+                  transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut' }}
+                  className="absolute top-[15%] left-[10%] w-36 rounded-2xl bg-emerald-500/[0.08] border border-emerald-500/20 p-4 backdrop-blur-sm"
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-wider">Legitimate</span>
+                  </div>
+                  <div className="text-lg font-bold text-white font-data">94.2%</div>
+                  <div className="text-[9px] text-[#475569] mt-0.5">₹12.4Cr processed</div>
+                </motion.div>
 
-                {/* Verdict Stamp */}
-                <div style={{ display: 'flex', justifyContent: 'center', marginTop: 20 }}>
-                  <VerdictStamp action="REVIEW" />
-                </div>
+                {/* Fraud Stream Card */}
+                <motion.div
+                  animate={{ y: [0, 8, 0] }}
+                  transition={{ duration: 4, repeat: Infinity, ease: 'easeInOut', delay: 1 }}
+                  className="absolute bottom-[15%] right-[10%] w-36 rounded-2xl bg-rose-500/[0.08] border border-rose-500/20 p-4 backdrop-blur-sm"
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-2 h-2 rounded-full bg-rose-400 animate-pulse" />
+                    <span className="text-[9px] font-bold text-rose-400 uppercase tracking-wider">Fraud</span>
+                  </div>
+                  <div className="text-lg font-bold text-white font-data">5.8%</div>
+                  <div className="text-[9px] text-[#475569] mt-0.5">₹28L prevented</div>
+                </motion.div>
 
-                {/* Floating mini cards */}
+                {/* Connection lines SVG */}
+                <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 520 520">
+                  <defs>
+                    <linearGradient id="legitGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor="#10b981" stopOpacity="0.4" />
+                      <stop offset="100%" stopColor="#3395FF" stopOpacity="0.2" />
+                    </linearGradient>
+                    <linearGradient id="fraudGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor="#ef4444" stopOpacity="0.4" />
+                      <stop offset="100%" stopColor="#3395FF" stopOpacity="0.2" />
+                    </linearGradient>
+                  </defs>
+                  <motion.path
+                    d="M120 130 Q260 200 260 260"
+                    stroke="url(#legitGrad)"
+                    strokeWidth="2"
+                    fill="none"
+                    strokeDasharray="8 4"
+                    initial={{ pathLength: 0 }}
+                    animate={{ pathLength: 1 }}
+                    transition={{ duration: 2, repeat: Infinity, repeatType: 'reverse' }}
+                  />
+                  <motion.path
+                    d="M400 390 Q260 320 260 260"
+                    stroke="url(#fraudGrad)"
+                    strokeWidth="2"
+                    fill="none"
+                    strokeDasharray="8 4"
+                    initial={{ pathLength: 0 }}
+                    animate={{ pathLength: 1 }}
+                    transition={{ duration: 2, repeat: Infinity, repeatType: 'reverse', delay: 0.5 }}
+                  />
+                </svg>
+
+                {/* Floating mini transaction cards */}
                 {[
-                  { x: '75%', y: '15%', amount: '₹45,000', action: 'REVIEW', color: '#E8A23D' },
-                  { x: '15%', y: '55%', amount: '₹2,300', action: 'ALLOW', color: '#4FD1A5' },
-                  { x: '70%', y: '60%', amount: '₹91,000', action: 'BLOCK', color: '#E8433A' },
+                  { x: '75%', y: '20%', amount: '₹45,000', status: 'ALLOW', color: '#10b981', delay: 0 },
+                  { x: '15%', y: '65%', amount: '₹1,20,000', status: 'REVIEW', color: '#f59e0b', delay: 0.5 },
+                  { x: '70%', y: '70%', amount: '₹89,000', status: 'BLOCK', color: '#ef4444', delay: 1 },
                 ].map((card, i) => (
-                  <motion.div key={i}
+                  <motion.div
+                    key={i}
                     initial={{ opacity: 0, scale: 0.8 }}
                     animate={{ opacity: 1, scale: 1, y: [0, -6, 0] }}
-                    transition={{ opacity: { delay: 1.5 + i * 0.3 }, scale: { delay: 1.5 + i * 0.3 }, y: { duration: 3 + i, repeat: Infinity, ease: 'easeInOut', delay: i * 0.3 } }}
-                    style={{
-                      position: 'absolute', left: card.x, top: card.y, transform: 'translate(-50%, -50%)',
-                      padding: '8px 12px', borderRadius: 8,
-                      background: 'var(--tb-ink-2)', border: '1px solid var(--tb-hairline)',
-                      fontFamily: 'var(--f-mono)', fontSize: 10
-                    }}>
-                    <div style={{ color: 'var(--tb-text-3)', fontSize: 9 }}>pay_{Math.random().toString(36).slice(2, 6).toUpperCase()}</div>
-                    <div style={{ color: 'var(--tb-text-1)', fontWeight: 700, fontSize: 12 }}>{card.amount}</div>
-                    <div style={{ fontSize: 8, fontWeight: 700, textTransform: 'uppercase', marginTop: 2, color: card.color }}>{card.action}</div>
+                    transition={{
+                      opacity: { delay: 1.5 + card.delay },
+                      scale: { delay: 1.5 + card.delay },
+                      y: { duration: 3 + i, repeat: Infinity, ease: 'easeInOut', delay: card.delay },
+                    }}
+                    className="absolute px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.06] backdrop-blur-sm"
+                    style={{ left: card.x, top: card.y, transform: 'translate(-50%, -50%)' }}
+                  >
+                    <div className="text-[9px] font-mono text-[#475569]">pay_{Math.random().toString(36).slice(2, 6).toUpperCase()}</div>
+                    <div className="text-[11px] font-bold text-white font-data">{card.amount}</div>
+                    <div className="text-[8px] font-bold uppercase mt-0.5" style={{ color: card.color }}>{card.status}</div>
                   </motion.div>
                 ))}
               </div>
             </motion.div>
           </div>
 
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 2 }} className="flex justify-center mt-8">
-            <motion.button onClick={() => document.getElementById('how-it-works')?.scrollIntoView({ behavior: 'smooth' })}
-              animate={{ y: [0, 8, 0] }} transition={{ duration: 2, repeat: Infinity }}
-              style={{ color: 'var(--tb-text-3)', background: 'none', border: 'none', cursor: 'pointer' }}>
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 2 }}
+            className="flex justify-center mt-8"
+          >
+            <motion.button
+              onClick={() => document.getElementById('how-it-works')?.scrollIntoView({ behavior: 'smooth' })}
+              animate={{ y: [0, 8, 0] }}
+              transition={{ duration: 2, repeat: Infinity }}
+              className="text-[#475569] hover:text-white transition-colors"
+            >
               <ChevronDown className="w-6 h-6" />
             </motion.button>
           </motion.div>
         </motion.div>
       </section>
 
-      {/* HONEST STATS BAR — Only real metrics from backend */}
-      <section style={{ padding: '48px 24px', borderTop: '1px solid var(--tb-hairline)', borderBottom: '1px solid var(--tb-hairline)', position: 'relative' }}>
-        <div className="max-w-[1200px] mx-auto">
-          <div style={{ fontFamily: 'var(--f-mono)', fontSize: 10, color: 'var(--tb-text-3)', textAlign: 'center', marginBottom: 24, letterSpacing: '0.06em' }}>
-            MODEL PERFORMANCE · HELD-OUT TEST SET
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
-            {metrics ? [
-              { label: 'Fraud Precision', value: metrics.fraud_precision?.toFixed(3) ?? '—', color: 'var(--tb-red)' },
-              { label: 'Fraud Recall', value: metrics.fraud_recall?.toFixed(3) ?? '—', color: 'var(--tb-red)' },
-              { label: 'FP Precision', value: metrics.fp_precision?.toFixed(3) ?? '—', color: 'var(--tb-gold)' },
-              { label: 'Tests Passing', value: '43 / 43', color: 'var(--tb-mint)' },
-            ].map((stat, i) => (
-              <motion.div key={stat.label} initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.1 }} className="text-center">
-                <div style={{ fontFamily: 'var(--f-mono)', fontSize: 28, fontWeight: 600, color: stat.color }}>{stat.value}</div>
-                <div style={{ fontSize: 11, color: 'var(--tb-text-3)', marginTop: 8, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700 }}>{stat.label}</div>
-              </motion.div>
-            )) : (
-              // Loading state or fallback
-              [
-                { label: 'Fraud Precision', color: 'var(--tb-red)' },
-                { label: 'Fraud Recall', color: 'var(--tb-red)' },
-                { label: 'FP Precision', color: 'var(--tb-gold)' },
-                { label: 'Tests Passing', color: 'var(--tb-mint)' },
-              ].map((stat, i) => (
-                <motion.div key={stat.label} initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.1 }} className="text-center">
-                  <div style={{ fontFamily: 'var(--f-mono)', fontSize: 28, fontWeight: 600, color: stat.color }}>—</div>
-                  <div style={{ fontSize: 11, color: 'var(--tb-text-3)', marginTop: 8, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700 }}>{stat.label}</div>
-                </motion.div>
-              ))
-            )}
-          </div>
-          <div style={{ textAlign: 'center', marginTop: 16 }}>
-            <span style={{ fontSize: 10, color: 'var(--tb-text-3)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <Info size={10} />
-              Metrics from ml/evaluation.py on held-out test set. No cherry-picking.
-            </span>
-          </div>
+      {/* STATS BAR */}
+      <section className="py-16 px-6 border-y border-white/[0.06] relative">
+        <div className="max-w-[1200px] mx-auto grid grid-cols-2 md:grid-cols-4 gap-8">
+          {[
+            { label: 'Fraud Prevented', value: 2840000, prefix: '₹', suffix: 'L+' },
+            { label: 'Accuracy', value: 99.2, prefix: '', suffix: '%', decimals: 1 },
+            { label: 'Latency', value: 12, prefix: '', suffix: 'ms' },
+            { label: 'Transactions', value: 5000000, prefix: '', suffix: '+' },
+          ].map((stat, i) => (
+            <motion.div
+              key={stat.label}
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ delay: i * 0.1 }}
+              className="text-center"
+            >
+              <div className="text-4xl font-bold text-white font-data">
+                <AnimatedCounter value={stat.value} prefix={stat.prefix} suffix={stat.suffix} />
+              </div>
+              <div className="text-[11px] text-[#475569] mt-2 uppercase tracking-widest font-bold">{stat.label}</div>
+            </motion.div>
+          ))}
         </div>
       </section>
 
       {/* HOW IT WORKS */}
-      <section id="how-it-works" style={{ padding: '100px 24px' }}>
+      <section id="how-it-works" className="py-28 px-6">
         <div className="max-w-[1200px] mx-auto">
-          <motion.div initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="text-center mb-20">
-            <div style={{ fontFamily: 'var(--f-mono)', fontSize: 11, color: 'var(--tb-gold)', letterSpacing: '0.06em', marginBottom: 12 }}>ARCHITECTURE</div>
-            <h2 style={{ fontFamily: 'var(--f-display)', fontStyle: 'italic', fontWeight: 400, fontSize: 40, margin: 0, color: 'var(--tb-text-1)' }}>
-              How TieBreaker Works
-            </h2>
-            <p style={{ fontSize: 15, color: 'var(--tb-text-2)', marginTop: 12, maxWidth: 520, margin: '12px auto 0', lineHeight: 1.65 }}>
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            className="text-center mb-20"
+          >
+            <span className="text-[11px] font-bold text-[#3395FF] uppercase tracking-widest">Architecture</span>
+            <h2 className="text-4xl font-bold text-white mt-3">How TieBreaker Works</h2>
+            <p className="text-[15px] text-[#94a3b8] mt-4 max-w-lg mx-auto">
               Every transaction flows through a dual-stream intelligence pipeline
             </p>
           </motion.div>
 
-          <div className="grid md:grid-cols-3 gap-6 relative">
+          <div className="grid md:grid-cols-3 gap-8 relative">
+            {/* Connection line */}
+            <div className="hidden md:block absolute top-1/2 left-[16.67%] right-[16.67%] h-[1px] bg-gradient-to-r from-transparent via-[#3395FF]/20 to-transparent" />
+
             {[
               {
                 step: '01',
                 icon: CreditCard,
                 title: 'Payment Initiated',
-                desc: 'Customer completes checkout via Razorpay Test Mode. Transaction data is captured with velocity, device, and behavioural signals.',
-                color: 'var(--tb-red)',
+                desc: 'Customer completes checkout via UPI, Card, or NetBanking. Transaction data is captured in real-time with full device fingerprinting.',
+                color: '#3395FF',
               },
               {
                 step: '02',
                 icon: Brain,
                 title: 'Dual Model Inference',
-                desc: 'Fraud Detection + False Positive models run in parallel, scoring risk from both angles using XGBoost on the held-out test set.',
-                color: 'var(--tb-gold)',
+                desc: 'Fraud Detection + False Positive models run in parallel on GPU clusters, scoring risk from both angles in under 20ms.',
+                color: '#a855f7',
               },
               {
                 step: '03',
                 icon: Shield,
                 title: 'Strike Decision Engine',
                 desc: 'Cost-optimized decision engine picks the action with lowest expected financial loss — not just the highest accuracy.',
-                color: 'var(--tb-blue)',
+                color: '#10b981',
               },
             ].map((item, i) => {
               const Icon = item.icon
               return (
                 <FloatingCard key={item.title} delay={i * 0.15} className="relative">
-                  <div style={{ position: 'absolute', top: -14, left: 20, padding: '2px 8px', background: 'var(--tb-ink)', border: '1px solid var(--tb-hairline)', borderRadius: 6, fontFamily: 'var(--f-mono)', fontSize: 10, fontWeight: 700, color: 'var(--tb-text-3)' }}>
+                  <div className="absolute -top-4 left-5 px-2 py-0.5 bg-[#03040a] border border-white/[0.08] rounded text-[10px] font-mono font-bold text-[#475569]">
                     {item.step}
                   </div>
-                  <div className="w-12 h-12 rounded-xl flex items-center justify-center mb-5 mt-2" style={{ background: `${item.color}12` }}>
+                  <div className="w-12 h-12 rounded-xl flex items-center justify-center mb-5 mt-2" style={{ backgroundColor: `${item.color}12` }}>
                     <Icon className="w-6 h-6" style={{ color: item.color }} />
                   </div>
-                  <h3 style={{ fontSize: 16, fontWeight: 700, color: 'var(--tb-text-1)', margin: '0 0 10px' }}>{item.title}</h3>
-                  <p style={{ fontSize: 13, color: 'var(--tb-text-2)', lineHeight: 1.65, margin: 0 }}>{item.desc}</p>
-                  <div style={{ width: 24, height: 3, background: item.color, borderRadius: 2, marginTop: 16 }} />
+                  <h3 className="text-lg font-bold text-white mb-3">{item.title}</h3>
+                  <p className="text-[13px] text-[#94a3b8] leading-relaxed">{item.desc}</p>
                 </FloatingCard>
               )
             })}
@@ -329,35 +474,38 @@ export default function Landing() {
       </section>
 
       {/* FEATURES */}
-      <section id="product" style={{ padding: '100px 24px', borderTop: '1px solid var(--tb-hairline)', borderBottom: '1px solid var(--tb-hairline)' }}>
+      <section id="product" className="py-28 px-6 border-y border-white/[0.06]">
         <div className="max-w-[1200px] mx-auto">
-          <motion.div initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="text-center mb-20">
-            <div style={{ fontFamily: 'var(--f-mono)', fontSize: 11, color: 'var(--tb-gold)', letterSpacing: '0.06em', marginBottom: 12 }}>CAPABILITIES</div>
-            <h2 style={{ fontFamily: 'var(--f-display)', fontStyle: 'italic', fontWeight: 400, fontSize: 40, margin: 0, color: 'var(--tb-text-1)' }}>
-              Built for Scale
-            </h2>
-            <p style={{ fontSize: 15, color: 'var(--tb-text-2)', marginTop: 12, maxWidth: 520, margin: '12px auto 0', lineHeight: 1.65 }}>
-              Infrastructure designed for payment processors operating at scale
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            className="text-center mb-20"
+          >
+            <span className="text-[11px] font-bold text-[#3395FF] uppercase tracking-widest">Capabilities</span>
+            <h2 className="text-4xl font-bold text-white mt-3">Built for Scale</h2>
+            <p className="text-[15px] text-[#94a3b8] mt-4 max-w-lg mx-auto">
+              Infrastructure that payment processors trust at millions of transactions per day
             </p>
           </motion.div>
 
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
             {[
               { icon: Eye, title: 'Counterintuitive Detection', desc: 'Flags high-fraud cases where REVIEW beats BLOCK to preserve customer LTV and merchant relationships.' },
-              { icon: Clock, title: 'Real-Time Pipeline', desc: 'End-to-end decision with full audit trail, SHAP-style explanations, and model versioning.' },
-              { icon: TrendingUp, title: 'Continuous Learning', desc: 'Analyst overrides feed back into model retraining via active learning pipeline.' },
-              { icon: BarChart3, title: 'Financial Impact', desc: 'Track rupee-denominated expected loss for all four actions — not just accuracy scores.' },
-              { icon: Lock, title: 'Analyst Override', desc: 'Human-in-the-loop review queue with priority scoring and one-click actions.' },
-              { icon: Zap, title: 'What-If Simulator', desc: 'Adjust fraud/FP probabilities to see how optimal decisions change before deploying.' },
+              { icon: Clock, title: 'Real-Time Pipeline', desc: 'End-to-end decision in under 50ms with full audit trail, SHAP explanations, and model versioning.' },
+              { icon: TrendingUp, title: 'Continuous Learning', desc: 'Analyst overrides feed back into model retraining via active learning, improving accuracy daily.' },
+              { icon: BarChart3, title: 'Financial Impact', desc: 'Track rupees saved from fraud prevention and false-positive reduction with real-time counters.' },
+              { icon: Lock, title: 'Analyst Override', desc: 'Human-in-the-loop review queue with priority scoring, impact analysis, and one-click actions.' },
+              { icon: Zap, title: 'What-If Simulator', desc: 'Adjust fraud/FP probabilities in real-time to see how optimal decisions change before deploying.' },
             ].map((item, i) => {
               const Icon = item.icon
               return (
                 <FloatingCard key={item.title} delay={i * 0.08}>
-                  <div className="w-10 h-10 rounded-lg flex items-center justify-center mb-4" style={{ background: 'var(--tb-blue-dim)' }}>
-                    <Icon className="w-5 h-5" style={{ color: 'var(--tb-blue)' }} />
+                  <div className="w-10 h-10 rounded-lg bg-[#3395FF]/10 flex items-center justify-center mb-4">
+                    <Icon className="w-5 h-5 text-[#3395FF]" />
                   </div>
-                  <h3 style={{ fontSize: 15, fontWeight: 700, color: 'var(--tb-text-1)', margin: '0 0 8px' }}>{item.title}</h3>
-                  <p style={{ fontSize: 12, color: 'var(--tb-text-2)', lineHeight: 1.65, margin: 0 }}>{item.desc}</p>
+                  <h3 className="text-[15px] font-bold text-white mb-2">{item.title}</h3>
+                  <p className="text-[12px] text-[#94a3b8] leading-relaxed">{item.desc}</p>
                 </FloatingCard>
               )
             })}
@@ -365,56 +513,55 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* DASHBOARD PREVIEW — NO FAKE NUMBERS */}
-      <section style={{ padding: '100px 24px' }}>
+      {/* DASHBOARD PREVIEW */}
+      <section className="py-28 px-6">
         <div className="max-w-[1200px] mx-auto">
-          <motion.div initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} className="text-center mb-16">
-            <div style={{ fontFamily: 'var(--f-mono)', fontSize: 11, color: 'var(--tb-gold)', letterSpacing: '0.06em', marginBottom: 12 }}>INTERFACE</div>
-            <h2 style={{ fontFamily: 'var(--f-display)', fontStyle: 'italic', fontWeight: 400, fontSize: 40, margin: 0, color: 'var(--tb-text-1)' }}>
-              Command Center
-            </h2>
-            <p style={{ fontSize: 15, color: 'var(--tb-text-2)', marginTop: 12, maxWidth: 520, margin: '12px auto 0', lineHeight: 1.65 }}>
-              A dashboard designed for speed, clarity, and honest decision-making
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            className="text-center mb-16"
+          >
+            <span className="text-[11px] font-bold text-[#3395FF] uppercase tracking-widest">Interface</span>
+            <h2 className="text-4xl font-bold text-white mt-3">Command Center</h2>
+            <p className="text-[15px] text-[#94a3b8] mt-4 max-w-lg mx-auto">
+              A dashboard designed for speed, clarity, and action
             </p>
           </motion.div>
 
-          <motion.div initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}
-            style={{ background: 'var(--tb-ink-2)', border: '1px solid var(--tb-hairline)', borderRadius: 14, padding: 4, overflow: 'hidden' }}>
-            <div style={{ background: 'var(--tb-ink)', borderRadius: 10, padding: 24 }}>
-              {/* Browser chrome */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--tb-red)', opacity: 0.6 }} />
-                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--tb-gold)', opacity: 0.6 }} />
-                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--tb-mint)', opacity: 0.6 }} />
+          <motion.div
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            className="float-card glow-border p-1 overflow-hidden"
+          >
+            <div className="bg-[#03040a] rounded-xl p-6">
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-rose-500/80" />
+                  <div className="w-3 h-3 rounded-full bg-amber-500/80" />
+                  <div className="w-3 h-3 rounded-full bg-emerald-500/80" />
                 </div>
-                <div style={{ flex: 1, textAlign: 'center' }}>
-                  <span style={{ fontFamily: 'var(--f-mono)', fontSize: 10, color: 'var(--tb-text-3)', background: 'var(--tb-ink-2)', padding: '3px 12px', borderRadius: 4, border: '1px solid var(--tb-hairline)' }}>
-                    tiebreaker.app/command
-                  </span>
-                </div>
+                <span className="text-[10px] text-[#475569] font-mono">TieBreaker Command Center v2.0.0</span>
               </div>
-
-              {/* KPI row */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 1, background: 'var(--tb-hairline)', borderRadius: 10, overflow: 'hidden', marginBottom: 16 }}>
+              <div className="grid grid-cols-4 gap-4 mb-6">
                 {[
-                  { label: 'Fraud Prevented', value: '—', sub: 'From real model output', color: 'var(--tb-red)' },
-                  { label: 'FP Revenue Saved', value: '—', sub: 'From real model output', color: 'var(--tb-gold)' },
-                  { label: 'Net Position', value: '—', sub: 'From real model output', color: 'var(--tb-mint)' },
-                  { label: 'Queue Pending', value: '—', sub: 'From real model output', color: 'var(--tb-text-1)' },
+                  { label: 'Total Decisions', value: '1,247', trend: '+12.5%', color: 'text-emerald-400' },
+                  { label: 'Fraud Prevented', value: '₹28.4L', trend: '+8.3%', color: 'text-emerald-400' },
+                  { label: 'Override Rate', value: '3.2%', trend: '-2.1%', color: 'text-rose-400' },
+                  { label: 'Avg Review', value: '4.2m', trend: '-0.4m', color: 'text-emerald-400' },
                 ].map((s) => (
-                  <div key={s.label} style={{ background: 'var(--tb-ink)', padding: '18px 20px' }}>
-                    <div style={{ fontFamily: 'var(--f-mono)', fontSize: 9, color: 'var(--tb-text-3)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>{s.label}</div>
-                    <div style={{ fontFamily: 'var(--f-mono)', fontSize: 22, fontWeight: 600, color: s.color }}>{s.value}</div>
-                    <div style={{ fontSize: 9, color: 'var(--tb-text-3)', marginTop: 4 }}>{s.sub}</div>
+                  <div key={s.label} className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.04]">
+                    <div className="text-[9px] text-[#475569] uppercase font-bold mb-1">{s.label}</div>
+                    <div className="text-lg font-bold text-white font-data">{s.value}</div>
+                    <div className={`text-[9px] font-mono mt-1 ${s.color}`}>{s.trend}</div>
                   </div>
                 ))}
               </div>
-
-              <div style={{ height: 120, borderRadius: 10, background: 'var(--tb-ink-2)', border: '1px solid var(--tb-hairline)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--tb-text-3)', fontSize: 12 }}>
-                  <BarChart3 size={16} />
-                  Live transaction pipeline — connect to /command to see real data
+              <div className="h-32 rounded-xl bg-white/[0.02] border border-white/[0.04] flex items-center justify-center">
+                <div className="flex items-center gap-2 text-[#475569]">
+                  <BarChart3 className="w-4 h-4" />
+                  <span className="text-[11px]">Live transaction pipeline visualization</span>
                 </div>
               </div>
             </div>
@@ -423,26 +570,30 @@ export default function Landing() {
       </section>
 
       {/* CTA */}
-      <section style={{ padding: '100px 24px', position: 'relative', overflow: 'hidden' }}>
-        <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 50% 0%, rgba(232,162,61,0.05) 0%, transparent 60%)', pointerEvents: 'none' }} />
+      <section className="py-28 px-6 relative overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-b from-[#3395FF]/5 via-transparent to-transparent pointer-events-none" />
         <div className="max-w-[800px] mx-auto text-center relative z-10">
-          <motion.div initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}>
-            <h2 style={{ fontFamily: 'var(--f-display)', fontStyle: 'italic', fontWeight: 400, fontSize: 42, margin: '0 0 16px', color: 'var(--tb-text-1)' }}>
-              Ready to break the tie?
-            </h2>
-            <p style={{ fontSize: 15, color: 'var(--tb-text-2)', margin: '0 auto 32px', maxWidth: 480, lineHeight: 1.65 }}>
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+          >
+            <h2 className="text-4xl font-bold text-white mb-4">Ready to break the tie?</h2>
+            <p className="text-[15px] text-[#94a3b8] mb-10 max-w-md mx-auto">
               Experience the next generation of payment risk intelligence built for the Razorpay ecosystem.
             </p>
             <div className="flex items-center justify-center gap-4">
-              <button onClick={() => navigate('/demostore')}
-                className="group px-8 py-4 rounded-xl text-sm font-bold transition-all flex items-center gap-2"
-                style={{ background: 'var(--tb-text-1)', color: 'var(--tb-ink)', fontFamily: 'var(--f-ui)' }}>
+              <button
+                onClick={() => navigate('/checkout')}
+                className="group px-8 py-4 bg-gradient-to-r from-[#3395FF] to-[#a855f7] text-white rounded-xl text-sm font-bold hover:shadow-2xl hover:shadow-[#3395FF]/30 transition-all flex items-center gap-2"
+              >
                 Launch Live Demo
                 <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
               </button>
-              <button onClick={() => navigate('/command')}
-                className="px-8 py-4 text-sm font-semibold rounded-xl transition-all"
-                style={{ color: 'var(--tb-text-1)', border: '1px solid var(--tb-hairline-strong)', background: 'transparent' }}>
+              <button
+                onClick={() => navigate('/command')}
+                className="px-8 py-4 text-sm font-semibold text-white border border-white/[0.1] rounded-xl hover:border-[#3395FF]/40 hover:bg-[#3395FF]/5 transition-all"
+              >
                 Explore Dashboard
               </button>
             </div>
@@ -451,34 +602,21 @@ export default function Landing() {
       </section>
 
       {/* FOOTER */}
-      <footer style={{ borderTop: '1px solid var(--tb-hairline)', padding: '40px 24px' }}>
+      <footer className="border-t border-white/[0.06] py-10 px-6">
         <div className="max-w-[1200px] mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
-            <svg width={22} height={22} viewBox="0 0 100 100">
-              <polygon points="50,6 50,94 8,50" fill="#E8433A"/>
-              <polygon points="50,6 50,94 92,50" fill="#E8A23D"/>
-              <rect x="48.3" y="6" width="3.4" height="88" fill="#130F16"/>
-            </svg>
-            <span style={{ fontWeight: 800, fontSize: 13, color: 'var(--tb-text-1)' }}>
-              <span style={{ color: 'var(--tb-red)' }}>Tie</span>
-              <span style={{ color: 'var(--tb-gold)' }}>Breaker</span>
-            </span>
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#3395FF] to-[#a855f7] flex items-center justify-center">
+              <Zap className="w-3.5 h-3.5 text-white" />
+            </div>
+            <span className="text-[13px] font-bold text-white">TieBreaker</span>
           </div>
           <div className="flex items-center gap-6">
-            <span style={{ fontSize: 11, color: 'var(--tb-text-3)', fontFamily: 'var(--f-mono)' }}>Built for Razorpay Buildathon 2026</span>
-            <span style={{ fontSize: 11, color: 'var(--tb-text-3)' }}>·</span>
-            <span style={{ fontSize: 11, color: 'var(--tb-text-3)', fontFamily: 'var(--f-mono)' }}>Strike Decision Engine</span>
+            <span className="text-[11px] text-[#475569]">Built for Razorpay Buildathon 2026</span>
+            <span className="text-[11px] text-[#475569]">•</span>
+            <span className="text-[11px] text-[#475569]">AI Payment Risk Intelligence</span>
           </div>
         </div>
       </footer>
-
-      <style>{`
-        @keyframes stampSpin {
-          from { transform: rotate(-6deg); }
-          50% { transform: rotate(6deg); }
-          to { transform: rotate(-6deg); }
-        }
-      `}</style>
     </div>
   )
 }

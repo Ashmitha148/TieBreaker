@@ -2,23 +2,66 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   CreditCard, Smartphone, Banknote, ArrowRight, Shield,
-  Zap, CheckCircle, AlertTriangle, Clock, Brain
+  Zap, CheckCircle, AlertTriangle, Clock, Brain, XCircle, Loader2
 } from 'lucide-react'
 import TransactionPipeline from '../components/TransactionPipeline'
 import AppSidebar from '../components/AppSidebar'
 import StatusBar from '../components/StatusBar'
-import { API_URL, apiHeaders } from '../config'
+import { API_URL } from '../config'
+
+// Razorpay SDK is loaded via <script> in index.html
+declare global {
+  interface Window {
+    Razorpay: new (options: RazorpayOptions) => RazorpayInstance
+  }
+}
+
+interface RazorpayOptions {
+  key: string
+  amount: number
+  currency: string
+  name: string
+  description?: string
+  order_id: string
+  prefill?: { name?: string; email?: string; contact?: string }
+  theme?: { color?: string }
+  handler: (response: RazorpaySuccessResponse) => void
+  modal?: { ondismiss?: () => void }
+}
+
+interface RazorpaySuccessResponse {
+  razorpay_payment_id: string
+  razorpay_order_id: string
+  razorpay_signature: string
+}
+
+interface RazorpayInstance {
+  open(): void
+  on(event: string, callback: (response: any) => void): void
+}
+
+interface VerifiedPayment {
+  status: string
+  transaction_id: string
+  amount: number
+  recommended_action: string
+  fraud_probability: number
+  fp_probability: number
+  is_counterintuitive: boolean
+}
 
 export default function Checkout() {
   const [amount, setAmount] = useState('500')
   const [email, setEmail] = useState('user@example.com')
   const [phone, setPhone] = useState('9999999999')
   const [method, setMethod] = useState<'upi' | 'card' | 'netbanking'>('upi')
-  const [stage, setStage] = useState<'form' | 'processing' | '3ds_required' | 'result'>('form')
-  const [result, setResult] = useState<any>(null)
+  const [stage, setStage] = useState<'form' | 'processing' | 'result' | 'error'>('form')
+  const [result, setResult] = useState<VerifiedPayment | null>(null)
   const [pipelineSteps, setPipelineSteps] = useState<any[]>([])
+  const [loading, setLoading] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
-  const startPipeline = (txId: string, decision?: any) => {
+  const startPipeline = (data: VerifiedPayment) => {
     const steps = [
       { id: '1', label: 'Payment', detail: 'UPI / Card', status: 'pending' as const, icon: Zap },
       { id: '2', label: 'Velocity', detail: 'Checking...', status: 'pending' as const, icon: Clock },
@@ -30,62 +73,111 @@ export default function Checkout() {
     setPipelineSteps(steps)
     setStage('processing')
 
-    setTimeout(() => setPipelineSteps(s => s.map((step, i) => i === 0 ? { ...step, status: 'completed', detail: '₹' + amount, timestamp: '14:23:01.000' } : step)), 400)
-    setTimeout(() => setPipelineSteps(s => s.map((step, i) => i === 1 ? { ...step, status: 'completed', detail: decision?.velocity_source || 'velocity', timestamp: '14:23:01.120' } : step)), 900)
-    setTimeout(() => setPipelineSteps(s => s.map((step, i) => i === 2 ? { ...step, status: 'completed', detail: decision ? `prob: ${decision.fraud_probability}` : 'n/a', timestamp: '14:23:01.280' } : step)), 1400)
-    setTimeout(() => setPipelineSteps(s => s.map((step, i) => i === 3 ? { ...step, status: 'completed', detail: decision ? `prob: ${decision.fp_probability}` : 'n/a', timestamp: '14:23:01.310' } : step)), 1800)
+    const fraudPct = (data.fraud_probability * 100).toFixed(0)
+    const fpPct = (data.fp_probability * 100).toFixed(0)
+
+    setTimeout(() => setPipelineSteps(s => s.map((step, i) => i === 0 ? { ...step, status: 'completed', detail: '₹' + data.amount, timestamp: '14:23:01.000' } : step)), 400)
+    setTimeout(() => setPipelineSteps(s => s.map((step, i) => i === 1 ? { ...step, status: 'completed', detail: '12 txns/hr', timestamp: '14:23:01.120' } : step)), 900)
+    setTimeout(() => setPipelineSteps(s => s.map((step, i) => i === 2 ? { ...step, status: 'completed', detail: 'prob: ' + fraudPct + '%', timestamp: '14:23:01.280' } : step)), 1400)
+    setTimeout(() => setPipelineSteps(s => s.map((step, i) => i === 3 ? { ...step, status: 'completed', detail: 'prob: ' + fpPct + '%', timestamp: '14:23:01.310' } : step)), 1800)
     setTimeout(() => {
-      const rec = decision?.recommended_action || 'UNAVAILABLE'
-      setPipelineSteps(s => s.map((step, i) => i === 4 ? { ...step, status: 'active', detail: rec, timestamp: '14:23:01.340' } : step))
-      setResult(decision || { transaction_id: txId, amount: Number(amount), recommended_action: rec, fraud_probability: null, fp_probability: null, is_counterintuitive: false })
+      setPipelineSteps(s => s.map((step, i) => i === 4 ? { ...step, status: 'active', detail: data.recommended_action, timestamp: '14:23:01.340' } : step))
+      setResult(data)
     }, 2200)
     setTimeout(() => setPipelineSteps(s => s.map((step, i) => i === 5 ? { ...step, status: 'completed', detail: 'Done', timestamp: '14:23:01.400' } : step)), 2800)
     setTimeout(() => setStage('result'), 3200)
   }
 
   const handlePay = async () => {
-    setStage('processing')
+    setErrorMsg(null)
+    setLoading(true)
+
+    // 1. Create order on backend
+    let orderData: { order_id: string; amount: number; currency: string; key_id: string }
     try {
-      const res = await fetch(`${API_URL}/api/create-order`, {
+      const res = await fetch(`${API_URL}/api/payment/create-order`, {
         method: 'POST',
-        headers: apiHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
-          amount: Number(amount) * 100,  // paise
-          currency: 'INR',
-          receipt: `rcpt_${Date.now()}`,
-        })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: Number(amount) * 100, currency: 'INR' }),
       })
-
       if (!res.ok) {
-        const err = await res.text()
-        throw new Error(err || `HTTP ${res.status}`)
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.detail || `Backend error ${res.status}`)
       }
-
-      const data = await res.json()
-
-      // Handle 3DS requirement
-      if (data.requires_3ds) {
-        setStage('3ds_required')
-        // TODO: Integrate Razorpay 3DS flow here
-        // Razorpay checkout with `order_id: data.order_id`
-        return
-      }
-
-      const decision = {
-        transaction_id: data.order_id,
-        amount: Number(amount),
-        recommended_action: data.recommended_action,
-        fraud_probability: data.fraud_prob,
-        fp_probability: data.fp_prob,
-        is_counterintuitive: false,
-      }
-
-      startPipeline(data.order_id, decision)
-    } catch (e) {
-      console.error(e)
-      setStage('form')
-      alert('Payment failed: ' + (e as Error).message)
+      orderData = await res.json()
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to create order. Is the backend running with Razorpay keys configured?')
+      setStage('error')
+      setLoading(false)
+      return
     }
+
+    // 2. Open Razorpay checkout modal
+    if (!window.Razorpay) {
+      setErrorMsg('Razorpay SDK not loaded. Check your internet connection.')
+      setStage('error')
+      setLoading(false)
+      return
+    }
+
+    const options: RazorpayOptions = {
+      key: orderData.key_id,
+      amount: orderData.amount,
+      currency: orderData.currency,
+      name: 'TieBreaker',
+      description: 'Payment — ₹' + amount,
+      order_id: orderData.order_id,
+      prefill: {
+        name: 'Test User',
+        email: email,
+        contact: phone,
+      },
+      theme: {
+        color: '#3395FF',
+      },
+      handler: async (response: RazorpaySuccessResponse) => {
+        // 3. Verify payment on backend (runs fraud pipeline too)
+        setLoading(true)
+        try {
+          const verifyRes = await fetch(`${API_URL}/api/payment/verify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+            }),
+          })
+          if (!verifyRes.ok) {
+            const err = await verifyRes.json().catch(() => ({}))
+            throw new Error(err.detail || `Verification failed (${verifyRes.status})`)
+          }
+          const verified: VerifiedPayment = await verifyRes.json()
+          setLoading(false)
+          startPipeline(verified)
+        } catch (err: any) {
+          setErrorMsg(err.message || 'Payment verification failed')
+          setStage('error')
+          setLoading(false)
+        }
+      },
+      modal: {
+        ondismiss: () => {
+          setLoading(false)
+        },
+      },
+    }
+
+    const rzp = new window.Razorpay(options)
+
+    rzp.on('payment.failed', (response: any) => {
+      setErrorMsg(response.error?.description || 'Payment failed. Please try again.')
+      setStage('error')
+      setLoading(false)
+    })
+
+    rzp.open()
+    setLoading(false)
   }
 
   return (
@@ -139,9 +231,13 @@ export default function Checkout() {
                         })}
                       </div>
                     </div>
-                    <button onClick={handlePay}
-                      className="w-full py-3 bg-gradient-to-r from-[#3395FF] to-[#2563eb] text-white rounded-xl text-sm font-bold hover:shadow-lg hover:shadow-[#3395FF]/25 transition-all flex items-center justify-center gap-2">
-                      Pay ₹{Number(amount).toLocaleString('en-IN')}<ArrowRight className="w-4 h-4" />
+                    <button onClick={handlePay} disabled={loading}
+                      className="w-full py-3 bg-gradient-to-r from-[#3395FF] to-[#2563eb] text-white rounded-xl text-sm font-bold hover:shadow-lg hover:shadow-[#3395FF]/25 transition-all flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed">
+                      {loading ? (
+                        <><Loader2 className="w-4 h-4 animate-spin" /> Processing…</>
+                      ) : (
+                        <>Pay ₹{Number(amount).toLocaleString('en-IN')}<ArrowRight className="w-4 h-4" /></>
+                      )}
                     </button>
                   </div>
                 </div>
@@ -170,19 +266,30 @@ export default function Checkout() {
                 </div>
               </motion.div>
             )}
-            {stage === '3ds_required' && (
-              <motion.div className="float-card p-6 text-center">
-                <Shield className="w-12 h-12 text-amber-400 mx-auto mb-4" />
-                <h3 className="text-lg font-bold text-white mb-2">3D Secure Authentication Required</h3>
-                <p className="text-sm text-[#475569] mb-4">
-                  This transaction requires additional verification for security.
-                </p>
-                <button onClick={() => setStage('form')}
-                  className="text-[12px] text-[#3395FF] hover:text-[#5aabff] font-bold">
-                  ← Cancel
-                </button>
+
+            {stage === 'error' && errorMsg && (
+              <motion.div key="error" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+                <div className="float-card p-6 border-red-500/30">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center">
+                      <XCircle className="w-5 h-5 text-red-400" />
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-red-400 uppercase font-bold">Payment Failed</div>
+                      <div className="text-sm font-bold text-white mt-0.5">Transaction could not be completed</div>
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-red-500/5 border border-red-500/15">
+                    <p className="text-[12px] text-red-300">{errorMsg}</p>
+                  </div>
+                  <button onClick={() => { setStage('form'); setErrorMsg(null); setPipelineSteps([]) }}
+                    className="mt-4 text-[12px] text-[#3395FF] hover:text-[#5aabff] font-bold">
+                    ← Try Again
+                  </button>
+                </div>
               </motion.div>
             )}
+
             {(stage === 'processing' || stage === 'result') && (
               <motion.div key="processing" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
                 <div>
@@ -205,8 +312,8 @@ export default function Checkout() {
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                       {[
                         { label: 'Amount', value: `₹${result.amount.toLocaleString()}`, color: '#3395FF' },
-                        { label: 'Fraud Prob', value: result.fraud_probability == null ? 'n/a' : `${(result.fraud_probability * 100).toFixed(0)}%`, color: '#ef4444' },
-                        { label: 'FP Prob', value: result.fp_probability == null ? 'n/a' : `${(result.fp_probability * 100).toFixed(0)}%`, color: '#06b6d4' },
+                        { label: 'Fraud Prob', value: `${(result.fraud_probability * 100).toFixed(0)}%`, color: '#ef4444' },
+                        { label: 'FP Prob', value: `${(result.fp_probability * 100).toFixed(0)}%`, color: '#06b6d4' },
                         { label: 'Confidence', value: 'High', color: '#3395FF' },
                       ].map((s) => (
                         <div key={s.label} className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06]">

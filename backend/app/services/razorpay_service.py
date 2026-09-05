@@ -40,6 +40,7 @@ def create_order(
         "amount": amount,
         "currency": currency,
         "receipt": receipt or f"rcpt_{uuid4().hex[:12]}",
+        "payment_capture": 1,
     }
     if notes:
         payload["notes"] = notes

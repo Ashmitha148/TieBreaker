@@ -104,28 +104,23 @@ export default function ShadowMode() {
 
     es.onopen = () => setIsConnected(true)
 
-    es.addEventListener('transaction', (e: MessageEvent) => {
-  try {
-    const payload: StreamPayload = JSON.parse(e.data)
-    if (payload.type === 'transaction') {
-      setTransactions((prev) => {
-        const next = [payload, ...prev].slice(0, 60)
-        return next
-      })
-      setSelectedTx((prev) => prev || payload)
-      if (payload.data.decision.is_counterintuitive) {
-        setCounterintuitiveCount((c) => c + 1)
+    es.onmessage = (e) => {
+      try {
+        const payload: StreamPayload = JSON.parse(e.data)
+        if (payload.type === 'transaction') {
+          setTransactions((prev) => {
+            const next = [payload, ...prev].slice(0, 60)
+            return next
+          })
+          setSelectedTx((prev) => prev || payload) // auto-select first
+          if (payload.data.decision.is_counterintuitive) {
+            setCounterintuitiveCount((c) => c + 1)
+          }
+        }
+      } catch {
+        // ignore malformed
       }
     }
-  } catch {}
-})
-
-es.addEventListener('status', (e: MessageEvent) => {
-  try {
-    const payload = JSON.parse(e.data)
-    console.log('Stream status:', payload.message)
-  } catch {}
-})
 
     es.onerror = () => {
       setIsConnected(false)

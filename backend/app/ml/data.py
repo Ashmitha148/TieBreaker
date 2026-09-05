@@ -30,12 +30,7 @@ CACHE_VERSION = 6
 # PCA components derived from historical transaction clusters). The subset below
 # is the well-documented top-importance set that generalizes across the strict
 # temporal holdout without leaking target info.
-V_EXTRA = [
-    "V44", "V45", "V86", "V87", "V189", "V258", "V280", "V282", "V283",
-    "V284", "V285", "V286", "V287", "V288", "V289", "V290", "V291",
-    "V292", "V293", "V306", "V307", "V308", "V310", "V312", "V313",
-    "V314", "V315", "V317", "V321", "V322",
-]
+V_EXTRA = [f"V{i}" for i in range(1, 340) if not (6 <= i <= 15)]
 # Additional raw numeric columns (kept minimal: high-signal, low-cardinality).
 RAW_EXTRA = ["C8", "C9", "C10", "C11", "C12", "C13", "C14",
              "D8", "D9", "D10", "D11", "D15", "dist1"]
@@ -103,73 +98,23 @@ except ImportError:
 # Feature lists — curated for hackathon-quality, leakage-safe performance.
 # ---------------------------------------------------------------------------
 FRAUD_FEATURES = [
-    "TransactionAmt",
-    "hour_of_day",
-    "day_of_week",
-    "C1", "C2", "C3", "C4", "C6", "C7",
-    "D1", "D2", "D3", "D4", "D5", "D6", "D7",
-    "V1", "V2", "V3", "V4", "V5",
-    "card1", "card2", "card3", "card5",
-    "card4_encoded", "card6_encoded",
-    "addr1", "addr2",
-    "device_change_flag",
-    "geo_mismatch_flag",
-    "is_cross_border",
-    "velocity_1h_count",
-    "velocity_24h_count",
-    "velocity_7d_count",
-    "velocity_24h_amount_sum",
-    "velocity_24h_amount_mean",
-    "card1_total_count",
-    "addr1_total_count",
-    "merchant_chargeback_rate",
-    "payment_method_risk_score",
-    "hours_since_last_txn",
-    "hour_bin_risk",
-    "amount_zscore_temporal",
-    "weekend_flag",
-    "email_domain_risk",
-    "device_type_encoded",
-    "browser_risk",
-    "screen_size_risk",
-    "transaction_count_by_card1_hour",
-    "log_amt",
-    "product_cd_encoded",
-    "recv_email_domain_risk",
-    "id_02_usage_ratio",
-        "is_email_domain_match",
-    "m_match_count",
-] + V_EXTRA + RAW_EXTRA + ID_EXTRA
+    "C8", "V258", "V243", "C4", "V317", "V133", "C14", "V190", "V246",
+    "V70", "V189", "V30", "V294", "recv_email_domain_risk", "V69",
+    "V128", "V308", "card6_encoded", "V187", "addr2", "V312", "V150",
+    "C11", "product_cd_encoded", "V281", "V333", "V309", "C1", "V283",
+    "V49", "card3", "V67", "C13", "C12", "V152", "V287", "V54", "V156",
+    "V217", "email_domain_risk", "V87", "V226", "V332", "V201", "V65",
+    "V248", "V245", "D2", "V93", "V131",
+]
 
 FP_FEATURES = [
-    "TransactionAmt",
-    "hour_of_day",
-    "C1", "C2", "C3", "C4", "C6",
-    "D1", "D2", "D3",
-    "V1", "V2", "V3",
-    "card1", "card2", "card3", "card5",
-    "card4_encoded", "card6_encoded",
-    "addr1", "addr2",
-    "device_change_flag",
-    "geo_mismatch_flag",
-    "is_cross_border",
-    "velocity_1h_count",
-    "velocity_24h_count",
-    "velocity_24h_amount_sum",
-    "payment_method_risk_score",
-    "hours_since_last_txn",
-    "hour_bin_risk",
-    "amount_zscore_temporal",
-    "weekend_flag",
-    "email_domain_risk",
-    "device_type_encoded",
-    "browser_risk",
-    "screen_size_risk",
-    "log_amt",
-    "product_cd_encoded",
-    "recv_email_domain_risk",
-    "id_02_usage_ratio",
-    "is_email_domain_match",
+    "log_amt", "TransactionAmt", "hour_of_day", "device_change_flag",
+    "D1", "geo_mismatch_flag", "D2", "screen_size_risk",
+    "device_type_encoded", "product_cd_encoded", "amount_zscore_temporal",
+    "D3", "is_cross_border", "addr2", "id_02_usage_ratio", "addr1",
+    "card6_encoded", "browser_risk", "recv_email_domain_risk", "C1",
+    "C4", "C6", "C2", "email_domain_risk", "velocity_1h_count", "card3",
+    "velocity_24h_count", "hours_since_last_txn", "C3", "V3",
 ]
 
 
