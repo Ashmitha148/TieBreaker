@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
-import { API_URL } from '../config'
+import { API_URL, apiHeaders } from '../config'
 import AppSidebar from '../components/AppSidebar'
 import StatusBar from '../components/StatusBar'
 import TransactionPipeline from '../components/TransactionPipeline'
@@ -26,8 +26,8 @@ export default function Dashboard() {
 
   useEffect(() => {
     Promise.all([
-      fetch(`${API_URL}/api/metrics`).then(r => r.ok ? r.json() : Promise.reject()),
-      fetch(`${API_URL}/api/queue?limit=10`).then(r => r.ok ? r.json() : Promise.reject()),
+      fetch(`${API_URL}/api/metrics`, { headers: apiHeaders() })
+      fetch(`${API_URL}/api/queue?limit=10`, { headers: apiHeaders() }).then(r => r.ok ? r.json() : Promise.reject())
     ])
       .then(([m, q]) => {
         setMetrics(m)

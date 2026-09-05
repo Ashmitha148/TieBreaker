@@ -7,7 +7,7 @@ import {
 import TransactionPipeline from '../components/TransactionPipeline'
 import AppSidebar from '../components/AppSidebar'
 import StatusBar from '../components/StatusBar'
-import { API_URL } from '../config'
+import { API_URL, friendlyFetchError} from '../config'
 
 // Razorpay SDK is loaded via <script> in index.html
 declare global {
@@ -106,7 +106,7 @@ export default function Checkout() {
       }
       orderData = await res.json()
     } catch (err: any) {
-      setErrorMsg(err.message || 'Failed to create order. Is the backend running with Razorpay keys configured?')
+      setErrorMsg(friendlyFetchError(err))
       setStage('error')
       setLoading(false)
       return
